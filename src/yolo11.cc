@@ -155,15 +155,15 @@ int release_yolo11_model(rknn_app_context_t *app_ctx)
     return 0;
 }
 
-int inference_yolo11_model(rknn_app_context_t *app_ctx, image_buffer_t *img, object_detect_result_list *od_results)
+int inference_yolo11_model(rknn_app_context_t *app_ctx, image_buffer_t *img, object_detect_result_list *od_results, float conf_threshold, float nms_thresh)
 {
     int ret;
     image_buffer_t dst_img;
     letterbox_t letter_box;
     rknn_input inputs[app_ctx->io_num.n_input];
     rknn_output outputs[app_ctx->io_num.n_output];
-    const float nms_threshold = NMS_THRESH;      // 默认的NMS阈值
-    const float box_conf_threshold = BOX_THRESH; // 默认的置信度阈值
+    const float nms_threshold = nms_thresh;      // 使用传入的NMS阈值
+    const float box_conf_threshold = conf_threshold; // 使用传入的置信度阈值
     int bg_color = 114;
 
     if ((!app_ctx) || !(img) || (!od_results))

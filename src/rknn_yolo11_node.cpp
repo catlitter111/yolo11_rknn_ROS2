@@ -176,30 +176,28 @@ vision_msgs::msg::Detection2DArray RknnYolo11Node::processImage(const cv::Mat& i
     
     // 执行推理
     object_detect_result_list od_results;
-    int ret = inference_yolo11_model(&rknn_app_ctx_, &src_image, &od_results);
+    int ret = inference_yolo11_model(&rknn_app_ctx_, &src_image, &od_results, confidence_threshold_, nms_threshold_);
     
     if (ret == 0) {
-        // 转换检测结果为ROS消息格式
+        // 转换检测结果为ROS消息格式（置信度阈值已在后处理阶段应用）
         for (int i = 0; i < od_results.count; i++) {
             object_detect_result* det_result = &(od_results.results[i]);
             
-            if (det_result->prop >= confidence_threshold_) {
-                vision_msgs::msg::Detection2D detection;
-                
-                // 设置边界框
-                detection.bbox.center.position.x = (det_result->box.left + det_result->box.right) / 2.0;
-                detection.bbox.center.position.y = (det_result->box.top + det_result->box.bottom) / 2.0;
-                detection.bbox.size_x = det_result->box.right - det_result->box.left;
-                detection.bbox.size_y = det_result->box.bottom - det_result->box.top;
-                
-                // 设置检测结果
-                vision_msgs::msg::ObjectHypothesisWithPose hypothesis;
-                hypothesis.hypothesis.class_id = clothing_cls_to_name(det_result->cls_id);
-                hypothesis.hypothesis.score = det_result->prop;
-                
-                detection.results.push_back(hypothesis);
-                detections_msg.detections.push_back(detection);
-            }
+            vision_msgs::msg::Detection2D detection;
+            
+            // 设置边界框
+            detection.bbox.center.position.x = (det_result->box.left + det_result->box.right) / 2.0;
+            detection.bbox.center.position.y = (det_result->box.top + det_result->box.bottom) / 2.0;
+            detection.bbox.size_x = det_result->box.right - det_result->box.left;
+            detection.bbox.size_y = det_result->box.bottom - det_result->box.top;
+            
+            // 设置检测结果
+            vision_msgs::msg::ObjectHypothesisWithPose hypothesis;
+            hypothesis.hypothesis.class_id = clothing_cls_to_name(det_result->cls_id);
+            hypothesis.hypothesis.score = det_result->prop;
+            
+            detection.results.push_back(hypothesis);
+            detections_msg.detections.push_back(detection);
         }
     } else {
         RCLCPP_ERROR(this->get_logger(), "RKNN inference failed! ret=%d", ret);

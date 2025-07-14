@@ -27,7 +27,7 @@ def generate_launch_description():
     
     confidence_threshold_arg = DeclareLaunchArgument(
         'confidence_threshold',
-        default_value='0.25',
+        default_value='0.45',
         description='检测置信度阈值'
     )
     
