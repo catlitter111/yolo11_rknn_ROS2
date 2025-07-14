@@ -1,0 +1,10 @@
+build/
+install/
+log/
+
+
+*.log
+*.log.*
+*.log.*.*
+*.log.*.*.*
+*.log.*.*.*.*

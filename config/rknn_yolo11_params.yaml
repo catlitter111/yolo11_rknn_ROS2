@@ -1,0 +1,20 @@
+rknn_yolo11_node:
+  ros__parameters:
+    # 模型路径配置
+    model_path: "/userdata/rknn_yolo11_ros2/model/cloth.rknn"  # 需要设置为实际的模型路径
+    
+    # 话题配置
+    input_topic: "/stereo/left/image_raw"
+    output_topic: "/detections"
+    debug_image_topic: "/debug_image"
+    
+    # 检测参数
+    confidence_threshold: 0.25
+    nms_threshold: 0.45
+    
+    # 调试配置
+    enable_debug_image: true
+    
+    # 性能相关参数
+    # queue_size: 1  # 队列大小，控制延迟
+    # use_intra_process_comms: true  # 启用进程内通信优化
