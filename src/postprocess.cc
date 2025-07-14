@@ -484,6 +484,11 @@ static int process_i8_rv1106(int8_t *box_tensor, int32_t box_zp, float box_scale
 
             // compute box
             if (max_score > score_thres_i8) {
+                // 过滤掉vest类别（ID=4）和skirt类别（ID=8）的检测结果，因为存在严重误检测
+                if (max_class_id == 4 || max_class_id == 8) {
+                    continue;
+                }
+                
                 offset = (i * grid_w + j) * 4 * dfl_len;
                 float box[4];
                 float before_dfl[dfl_len*4];
@@ -655,6 +660,16 @@ int post_process(rknn_app_context_t *app_ctx, void *outputs, letterbox_t *letter
         float y2 = y1 + filterBoxes[n * 4 + 3];
         int id = classId[n];
         float obj_conf = objProbs[i];
+
+        // 过滤掉vest类别（ID=4）和skirt类别（ID=8）的检测结果，因为存在严重误检测
+        if (id == 4 || id == 8) {
+            if (id == 4) {
+                printf("过滤掉vest检测结果: 置信度=%.3f\n", obj_conf);
+            } else if (id == 8) {
+                printf("过滤掉skirt检测结果: 置信度=%.3f\n", obj_conf);
+            }
+            continue;
+        }
 
         od_results->results[last_count].box.left = (int)(clamp(x1, 0, model_in_w) / letter_box->scale);
         od_results->results[last_count].box.top = (int)(clamp(y1, 0, model_in_h) / letter_box->scale);

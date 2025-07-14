@@ -194,7 +194,7 @@ vision_msgs::msg::Detection2DArray RknnYolo11Node::processImage(const cv::Mat& i
                 
                 // 设置检测结果
                 vision_msgs::msg::ObjectHypothesisWithPose hypothesis;
-                hypothesis.hypothesis.class_id = std::to_string(det_result->cls_id);
+                hypothesis.hypothesis.class_id = clothing_cls_to_name(det_result->cls_id);
                 hypothesis.hypothesis.score = det_result->prop;
                 
                 detection.results.push_back(hypothesis);
