@@ -58,7 +58,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'model_path': LaunchConfiguration('model_path'),
-            'input_topic': '/stereo/left/image_raw',
+            'input_topic': '/stereo/left/image_raw',  # 使用实际的话题名称
             'output_topic': '/detections',
             'debug_image_topic': '/yolo_debug_image',
             'confidence_threshold': 0.25,
@@ -67,15 +67,15 @@ def generate_launch_description():
         }]
     )
     
-    # 图像显示节点
+    # 图像显示节点 - 显示YOLO检测结果而不是原始图像
     image_display_node = Node(
         package='rknn_yolo11_ros2',
         executable='rknn_yolo11_ros2_display_node',
         name='image_display_node',
         output='screen',
         parameters=[{
-            'input_topic': '/stereo/left/image_raw',
-            'window_name': 'Stereo Camera - Left View',
+            'input_topic': '/yolo_debug_image',  # 改为显示YOLO检测结果
+            'window_name': 'YOLO11 Detection Results',
             'enable_debug': True,
         }]
     )
@@ -92,4 +92,5 @@ def generate_launch_description():
         stereo_camera_node,
         stereo_display_node,
         rknn_yolo11_node,
+        image_display_node,
     ])
