@@ -6,6 +6,8 @@
 
 - 基于RKNN Runtime的高性能目标检测
 - 支持实时图像流处理
+- **集成双目立体视觉距离测量**
+- **智能显示：检测框+距离信息叠加**
 - 兼容ROS2 Humble版本
 - 支持调试图像输出
 - 可配置的检测参数
@@ -71,7 +73,13 @@ rknn_yolo11_node:
 
 ### 2. 启动节点
 
-#### 完整系统启动（推荐）- 双目相机+YOLO11检测
+#### 智能检测+距离测量系统（推荐）
+```bash
+source install/setup.bash
+ros2 launch rknn_yolo11_ros2 yolo11_with_distance.launch.py camera_id:=1
+```
+
+#### 完整系统启动（基础版）- 双目相机+YOLO11检测
 ```bash
 source install/setup.bash
 ros2 launch rknn_yolo11_ros2 yolo11_with_stereo.launch.py
@@ -102,34 +110,67 @@ ros2 run rknn_yolo11_ros2 rknn_yolo11_ros2_node --ros-args --params-file config/
 
 ### 3. 查看检测结果
 
+**智能显示窗口功能：**
+- 实时显示原始图像
+- 叠加YOLO检测框
+- 显示每个目标的距离信息
+- 统计信息（帧数、检测数、服务状态等）
+- 按'q'或ESC退出
+
+**命令行查看：**
 ```bash
 # 查看检测结果
 ros2 topic echo /detections
+
+# 查看距离服务状态
+ros2 service list | grep distance
+
+# 手动测试距离服务
+ros2 service call /stereo/get_distance stereo_camera_cpp/srv/GetDistance "{center_x: 320, center_y: 240, radius: 5}"
 
 # 查看调试图像（如果启用）
 ros2 run rqt_image_view rqt_image_view /yolo_debug_image
 
 # 查看双目相机左目图像
-ros2 run rqt_image_view rqt_image_view /stereo_camera/left/image_rectified
+ros2 run rqt_image_view rqt_image_view /stereo/left/image_raw
 
 # 查看所有话题
 ros2 topic list
 ```
 
+### 4. 快速功能验证
+
+```bash
+# 验证完整系统
+cd /userdata/rknn_yolo11_ros2
+source install/setup.bash
+
+# 启动智能检测+距离测量系统
+ros2 launch rknn_yolo11_ros2 yolo11_with_distance.launch.py
+
+# 在另一个终端检查话题
+ros2 topic list
+ros2 topic hz /detections
+ros2 service list | grep distance
+```
+
 ## 话题接口
 
 ### 订阅的话题
-- `/stereo_camera/left/image_rectified` (sensor_msgs/Image): 双目相机左目校正图像
+- `/stereo/left/image_raw` (sensor_msgs/Image): 双目相机左目原始图像
+- `/detections` (vision_msgs/Detection2DArray): YOLO检测结果（显示节点订阅）
 
 ### 发布的话题
 - `/detections` (vision_msgs/Detection2DArray): 目标检测结果
 - `/yolo_debug_image` (sensor_msgs/Image): 带检测框的调试图像（可选）
 
+### 服务接口
+- `/stereo/get_distance` (stereo_camera_cpp/srv/GetDistance): 距离测量服务
+
 ### 双目相机相关话题
-- `/stereo_camera/left/image_rectified` (sensor_msgs/Image): 左目校正图像
-- `/stereo_camera/right/image_rectified` (sensor_msgs/Image): 右目校正图像
-- `/stereo_camera/disparity` (sensor_msgs/Image): 视差图
-- `/stereo_camera/center_distance` (geometry_msgs/PointStamped): 中心点距离
+- `/stereo/left/image_raw` (sensor_msgs/Image): 左目原始图像
+- `/stereo/right/image_raw` (sensor_msgs/Image): 右目原始图像
+- `/stereo/disparity` (sensor_msgs/Image): 视差图（可选）
 
 ## 参数配置
 

@@ -15,6 +15,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
+find_package(stereo_camera_cpp REQUIRED)
 find_package(OpenCV REQUIRED)
 
 # 设置RKNN相关路径 - 需要根据实际安装路径调整
@@ -103,7 +104,13 @@ set(ROS2_DEPENDENCIES
 
 # 链接ROS2依赖
 ament_target_dependencies(${PROJECT_NAME}_node ${ROS2_DEPENDENCIES})
-ament_target_dependencies(${PROJECT_NAME}_display_node rclcpp sensor_msgs cv_bridge)
+ament_target_dependencies(${PROJECT_NAME}_display_node 
+    rclcpp 
+    sensor_msgs 
+    vision_msgs 
+    cv_bridge 
+    stereo_camera_cpp
+)
 ament_target_dependencies(${PROJECT_NAME}_component ${ROS2_DEPENDENCIES})
 
 # 链接系统库
