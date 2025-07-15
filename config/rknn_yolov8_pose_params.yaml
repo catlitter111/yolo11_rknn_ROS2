@@ -1,0 +1,28 @@
+rknn_yolov8_pose_node:
+  ros__parameters:
+    # 模型路径
+    model_path: "./model/yolov8_pose.rknn"
+    
+    # 话题配置
+    input_topic: "/camera/color/image_raw"
+    output_topic: "/yolov8_pose/image"
+    detection_topic: "/yolov8_pose/detections"
+    marker_topic: "/yolov8_pose/markers"
+    
+    # 显示配置
+    show_fps: true
+    enable_visualization: true
+    
+    # 检测参数
+    confidence_threshold: 0.5
+    nms_threshold: 0.4
+    
+    # 关键点参数
+    keypoint_confidence_threshold: 0.3
+    debug_keypoints: false
+    
+pose_display_node:
+  ros__parameters:
+    input_topic: "/yolov8_pose/image"
+    window_name: "YOLOv8 Pose Detection"
+    enable_display: true 

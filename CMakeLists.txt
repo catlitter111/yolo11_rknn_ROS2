@@ -11,6 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(vision_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
@@ -40,6 +41,14 @@ if(NOT EXISTS ${THIRD_PARTY_PATH})
     message(STATUS "Third party path not found, using simplified implementation")
     set(USE_SIMPLIFIED_DEPS TRUE)
 endif()
+
+# 添加外部包含目录
+include_directories(
+  include
+  ${OpenCV_INCLUDE_DIRS}
+  /userdata/cnpu/rknn_model_zoo-main/utils
+  /userdata/cnpu/rknn_model_zoo-main/3rdparty/rknpu2/include
+)
 
 # 头文件路径
 include_directories(
@@ -73,6 +82,14 @@ set(RKNN_SRCS
     src/common_utils.cpp
 )
 
+# YOLOv8 Pose 源文件
+set(YOLOV8_POSE_SRCS
+    src/rknn_yolov8_pose_node.cpp
+    src/postprocess_pose.cc
+    src/yolov8_pose.cc
+    src/common_utils.cpp
+)
+
 if(USE_SIMPLIFIED_DEPS)
     list(APPEND RKNN_SRCS ${SIMPLIFIED_UTILS_SRCS})
 endif()
@@ -88,6 +105,18 @@ add_executable(${PROJECT_NAME}_display_node
     src/image_display_node.cpp
 )
 
+# YOLOv8 Pose 节点
+add_executable(rknn_yolov8_pose_node
+    src/main_pose.cpp
+    ${YOLOV8_POSE_SRCS}
+    ${SIMPLIFIED_UTILS_SRCS}
+)
+
+# YOLOv8 Pose 显示节点
+add_executable(pose_display_node
+    src/pose_display_node.cpp
+)
+
 # 组件库
 add_library(${PROJECT_NAME}_component SHARED
     ${RKNN_SRCS}
@@ -99,6 +128,7 @@ set(ROS2_DEPENDENCIES
     rclcpp_components
     sensor_msgs
     vision_msgs
+    visualization_msgs
     geometry_msgs
     std_msgs
     cv_bridge
@@ -115,6 +145,15 @@ ament_target_dependencies(${PROJECT_NAME}_display_node
     cv_bridge 
 )
 ament_target_dependencies(${PROJECT_NAME}_component ${ROS2_DEPENDENCIES})
+
+# YOLOv8 Pose 节点依赖
+ament_target_dependencies(rknn_yolov8_pose_node ${ROS2_DEPENDENCIES})
+ament_target_dependencies(pose_display_node 
+    rclcpp 
+    sensor_msgs 
+    cv_bridge 
+    image_transport
+)
 
 # 链接系统库
 target_link_libraries(${PROJECT_NAME}_node
@@ -134,6 +173,18 @@ target_link_libraries(${PROJECT_NAME}_component
 target_link_libraries(${PROJECT_NAME}_display_node
     ${OpenCV_LIBS}
     ${JSONCPP_LIBRARIES}
+)
+
+# YOLOv8 Pose 节点链接
+target_link_libraries(rknn_yolov8_pose_node
+    ${RKNN_RT_LIB}
+    ${OpenCV_LIBS}
+    dl
+    pthread
+)
+
+target_link_libraries(pose_display_node
+    ${OpenCV_LIBS}
 )
 
 # 添加jsoncpp编译标志
@@ -159,12 +210,21 @@ rclcpp_components_register_nodes(${PROJECT_NAME}_component "RknnYolo11Node")
 # 设置目标属性
 target_compile_features(${PROJECT_NAME}_node PUBLIC c_std_99 cxx_std_17)
 target_compile_features(${PROJECT_NAME}_component PUBLIC c_std_99 cxx_std_17)
+target_compile_features(rknn_yolov8_pose_node PUBLIC c_std_99 cxx_std_17)
+target_compile_features(pose_display_node PUBLIC c_std_99 cxx_std_17)
 
 # 安装
 install(TARGETS ${PROJECT_NAME}_node
     DESTINATION lib/${PROJECT_NAME})
 
 install(TARGETS ${PROJECT_NAME}_display_node
+    DESTINATION lib/${PROJECT_NAME})
+
+# 安装YOLOv8 Pose节点
+install(TARGETS rknn_yolov8_pose_node
+    DESTINATION lib/${PROJECT_NAME})
+
+install(TARGETS pose_display_node
     DESTINATION lib/${PROJECT_NAME})
 
 install(TARGETS ${PROJECT_NAME}_component
