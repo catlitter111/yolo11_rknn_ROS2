@@ -40,7 +40,7 @@ def generate_launch_description():
     
     enable_debug_image_arg = DeclareLaunchArgument(
         'enable_debug_image',
-        default_value='true',
+        default_value='false',
         description='是否启用YOLO11调试图像'
     )
     
@@ -113,7 +113,12 @@ def generate_launch_description():
             'confidence_threshold': LaunchConfiguration('confidence_threshold'),
             'nms_threshold': LaunchConfiguration('nms_threshold'),
             'enable_debug_image': LaunchConfiguration('enable_debug_image'),
-        }]
+            # 🔧 优化19：通信优化参数
+            'use_intra_process_comms': True,  # 启用进程内通信
+            'enable_zero_copy': True,         # 启用零拷贝优化
+        }],
+        # 🔧 优化20：ROS2执行器优化
+        arguments=['--ros-args', '--log-level', 'info', '--enable-stdout-logs']
     )
     
     # 智能显示节点 - 显示YOLO检测结果并叠加距离信息
@@ -127,12 +132,18 @@ def generate_launch_description():
             'detection_topic': '/detections',
             'distance_request_topic': '/depth_reader/get_depth_at',
             'distance_response_topic': '/depth_reader/depth_value',
-            'window_name': 'YOLO11 + 距离检测',
+            'window_name': 'YOLO11 + 距离检测 (优化版)',
             'enable_distance': True,
             'enable_debug': True,
             'font_scale': 0.7,
             'line_thickness': 2,
-        }]
+            # 🔧 优化21：显示优化参数
+            'display_fps': 30,               # 显示帧率
+            'max_detection_age': 5.0,        # 最大检测信息保留时间
+            'distance_cache_size': 100,      # 距离缓存大小
+        }],
+        # 🔧 优化22：显示节点优化
+        arguments=['--ros-args', '--log-level', 'info']
     )
     
     return LaunchDescription([

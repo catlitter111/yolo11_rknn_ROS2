@@ -9,6 +9,8 @@
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.hpp>
 #include <opencv2/opencv.hpp>
+#include <chrono>
+#include <memory>
 
 #include "yolo11.h"
 #include "postprocess.h"
@@ -26,6 +28,7 @@ private:
     void initializeModel();
     void cleanupModel();
     vision_msgs::msg::Detection2DArray processImage(const cv::Mat& image);
+    void publishDebugImage(const cv::Mat& image, const std_msgs::msg::Header& header);
     
     // ROS2 publishers and subscribers
     image_transport::Subscriber image_sub_;

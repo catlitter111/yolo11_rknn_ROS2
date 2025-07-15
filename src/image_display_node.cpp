@@ -52,22 +52,41 @@ public:
         fps_buffer_size_ = 30;
         fps_timestamps_.resize(fps_buffer_size_);
         
+        // 🔧 优化17：针对不同数据类型的QoS配置
+        // 图像数据QoS - 匹配astra相机的传感器数据配置
+        auto image_qos = rclcpp::QoS(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_sensor_data))
+                           .keep_last(1)     // 只保留最新图像
+                           .best_effort()    // 最佳努力模式
+                           .durability_volatile();
+        
+        // 检测结果QoS - 确保可靠接收
+        auto detection_qos = rclcpp::QoS(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_default))
+                               .keep_last(2)     // 保留少量检测结果
+                               .reliable()       // 可靠传输
+                               .durability_volatile();
+        
+        // 距离服务QoS - 小消息，可靠传输
+        auto service_qos = rclcpp::QoS(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_default))
+                             .keep_last(5)     // 保留更多服务消息
+                             .reliable()
+                             .durability_volatile();
+        
         // 创建图像订阅者
         image_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-            input_topic, 10,
+            input_topic, image_qos,
             std::bind(&ImageDisplayNode::imageCallback, this, std::placeholders::_1));
         
         // 创建检测结果订阅者
         detection_sub_ = this->create_subscription<vision_msgs::msg::Detection2DArray>(
-            detection_topic, 10,
+            detection_topic, detection_qos,
             std::bind(&ImageDisplayNode::detectionCallback, this, std::placeholders::_1));
         
         // 创建距离请求发布者和响应订阅者
         if (enable_distance_) {
             distance_request_pub_ = this->create_publisher<std_msgs::msg::String>(
-                distance_request_topic_, 10);
+                distance_request_topic_, service_qos);
             distance_response_sub_ = this->create_subscription<std_msgs::msg::String>(
-                distance_response_topic_, 10,
+                distance_response_topic_, service_qos,
                 std::bind(&ImageDisplayNode::distanceResponseCallback, this, std::placeholders::_1));
         }
         

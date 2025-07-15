@@ -664,9 +664,9 @@ int post_process(rknn_app_context_t *app_ctx, void *outputs, letterbox_t *letter
         // 将vest类别（ID=4）和skirt类别（ID=8）替换为trousers类别（ID=7），因为存在误检测
         if (id == 4 || id == 8) {
             if (id == 4) {
-                printf("将vest检测结果替换为trousers: 置信度=%.3f\n", obj_conf);
+                // printf("将vest检测结果替换为trousers: 置信度=%.3f\n", obj_conf);
             } else if (id == 8) {
-                printf("将skirt检测结果替换为trousers: 置信度=%.3f\n", obj_conf);
+                // printf("将skirt检测结果替换为trousers: 置信度=%.3f\n", obj_conf);
             }
             id = 7;  // 替换为trousers
         }
@@ -693,7 +693,7 @@ int init_post_process()
 char *clothing_cls_to_name(int cls_id)
 {
     // 添加调试信息
-    printf("Debug: cls_id = %d, OBJ_CLASS_NUM = %d\n", cls_id, OBJ_CLASS_NUM);
+    // printf("Debug: cls_id = %d, OBJ_CLASS_NUM = %d\n", cls_id, OBJ_CLASS_NUM);
     
     if (cls_id >= OBJ_CLASS_NUM)
     {
@@ -708,7 +708,7 @@ char *clothing_cls_to_name(int cls_id)
     }
 
     // 直接返回硬编码的标签
-    printf("Debug: returning label[%d] = %s\n", cls_id, labels[cls_id]);
+    // printf("Debug: returning label[%d] = %s\n", cls_id, labels[cls_id]);
     return (char*)labels[cls_id];
 }
 
