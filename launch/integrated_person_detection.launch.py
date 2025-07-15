@@ -40,7 +40,7 @@ def generate_launch_description():
     
     nms_threshold_arg = DeclareLaunchArgument(
         'nms_threshold',
-        default_value='0.5',
+        default_value='0.6',
         description='NMS阈值'
     )
     

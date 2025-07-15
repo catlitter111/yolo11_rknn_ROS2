@@ -383,7 +383,7 @@ std::vector<PersonInfo> IntegratedPersonDetectionNode::determinePersonPositions(
             
             int head_extension = static_cast<int>(upper_height * 0.5);
             int foot_extension = static_cast<int>(lower_height * 0.6);
-            int side_extension = static_cast<int>(upper_width * 0.3);
+            int side_extension = static_cast<int>(upper_width * 0.1);
             
             person_bbox.x = std::max(0, person_bbox.x - side_extension);
             person_bbox.y = std::max(0, person_bbox.y - head_extension);
@@ -430,6 +430,16 @@ std::vector<PersonInfo> IntegratedPersonDetectionNode::determinePersonPositions(
         person.center = calculateCenter(person_bbox);
         person.clothing = pair;
         person.last_update = std::chrono::steady_clock::now();
+        
+        // 从缓存中获取距离信息（如果存在）
+        if (person_cache_.find(person.person_id) != person_cache_.end()) {
+            const auto& cached_person = person_cache_[person.person_id];
+            person.distance = cached_person.distance;
+            person.valid_distance = cached_person.valid_distance;
+            RCLCPP_DEBUG(this->get_logger(), "从缓存中恢复人员 %s 的距离信息: %.2fm (valid: %s)", 
+                        person.person_id.c_str(), person.distance, 
+                        person.valid_distance ? "true" : "false");
+        }
         
         RCLCPP_DEBUG(this->get_logger(), "创建人员 %s: 边界框=(%d,%d,%d,%d), 中心=(%.1f,%.1f)", 
                     person.person_id.c_str(), 
@@ -503,28 +513,59 @@ void IntegratedPersonDetectionNode::depthResultCallback(const std_msgs::msg::Str
         Json::Reader reader;
         
         if (!reader.parse(msg->data, result)) {
-            RCLCPP_ERROR(this->get_logger(), "解析深度结果JSON失败");
+            RCLCPP_ERROR(this->get_logger(), "解析深度结果JSON失败: %s", msg->data.c_str());
             return;
         }
         
+        RCLCPP_DEBUG(this->get_logger(), "收到深度响应: %s", msg->data.c_str());
+        
         int x = result["x"].asInt();
         int y = result["y"].asInt();
-        bool valid = result.get("valid", false).asBool();
+        bool valid = result.get("valid", true).asBool(); // 默认为true
         float depth_m = result.get("depth_m", -1.0f).asFloat();
         
+        RCLCPP_INFO(this->get_logger(), "解析深度数据: x=%d, y=%d, valid=%s, depth=%.3fm", 
+                   x, y, valid ? "true" : "false", depth_m);
+        
         // 查找对应的查询请求
+        bool found_match = false;
         for (auto it = pending_queries_.begin(); it != pending_queries_.end(); ++it) {
-            if (std::abs(it->query_point.x - x) < 1.0f && std::abs(it->query_point.y - y) < 1.0f) {
+            if (std::abs(it->query_point.x - x) < 5.0f && std::abs(it->query_point.y - y) < 5.0f) {
+                RCLCPP_INFO(this->get_logger(), "找到匹配的查询请求: %s, 坐标差异: (%.1f, %.1f)", 
+                           it->person_id.c_str(), 
+                           std::abs(it->query_point.x - x), 
+                           std::abs(it->query_point.y - y));
+                
                 // 更新人员缓存
                 if (person_cache_.find(it->person_id) != person_cache_.end()) {
                     person_cache_[it->person_id].distance = depth_m;
-                    person_cache_[it->person_id].valid_distance = valid;
+                    person_cache_[it->person_id].valid_distance = valid && (depth_m > 0);
+                    RCLCPP_INFO(this->get_logger(), "更新人员 %s 距离缓存: %.3fm (valid: %s)", 
+                               it->person_id.c_str(), depth_m, 
+                               (valid && depth_m > 0) ? "true" : "false");
+                } else {
+                    // 如果缓存中没有，创建新的缓存项
+                    PersonInfo cached_person;
+                    cached_person.person_id = it->person_id;
+                    cached_person.distance = depth_m;
+                    cached_person.valid_distance = valid && (depth_m > 0);
+                    cached_person.last_update = std::chrono::steady_clock::now();
+                    person_cache_[it->person_id] = cached_person;
+                    RCLCPP_INFO(this->get_logger(), "创建新的人员 %s 距离缓存: %.3fm (valid: %s)", 
+                               it->person_id.c_str(), depth_m, 
+                               (valid && depth_m > 0) ? "true" : "false");
                 }
                 
                 // 移除已处理的查询
                 pending_queries_.erase(it);
+                found_match = true;
                 break;
             }
+        }
+        
+        if (!found_match) {
+            RCLCPP_WARN(this->get_logger(), "未找到匹配的查询请求，坐标: (%d, %d), 待处理查询数: %zu", 
+                       x, y, pending_queries_.size());
         }
         
     } catch (const std::exception& e) {
@@ -573,11 +614,24 @@ cv::Mat IntegratedPersonDetectionNode::publishVisualization(const cv::Mat& image
             // 显示距离信息
             if (person.valid_distance) {
                 std::stringstream ss;
-                ss << "Dist: " << std::fixed << std::setprecision(2) << person.distance << "m";
-                cv::putText(vis_image, ss.str(),
-                           cv::Point(static_cast<int>(person.center.x - 30), 
-                                   static_cast<int>(person.center.y + 20)),
-                           cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 0), 2);
+                ss << std::fixed << std::setprecision(2) << person.distance << "m";
+                
+                // 计算文字位置 - 在人体中心点附近
+                cv::Point text_pos(static_cast<int>(person.center.x - 40), 
+                                 static_cast<int>(person.center.y + 30));
+                
+                // 绘制黑色背景矩形让文字更清晰
+                int baseline = 0;
+                cv::Size text_size = cv::getTextSize(ss.str(), cv::FONT_HERSHEY_SIMPLEX, 
+                                                   1.2, 3, &baseline);
+                cv::rectangle(vis_image, 
+                            cv::Point(text_pos.x - 5, text_pos.y - text_size.height - 5),
+                            cv::Point(text_pos.x + text_size.width + 5, text_pos.y + baseline + 5),
+                            cv::Scalar(0, 0, 0), -1); // 黑色背景
+                
+                // 绘制距离文字 - 更大字体，白色，更厚
+                cv::putText(vis_image, ss.str(), text_pos,
+                           cv::FONT_HERSHEY_SIMPLEX, 1.2, cv::Scalar(255, 255, 255), 3);
             }
             
             // 标记中心点
