@@ -17,6 +17,8 @@ find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(stereo_camera_cpp REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 
 # 设置RKNN相关路径 - 需要根据实际安装路径调整
 set(RKNN_RT_LIB_PATH "/usr/lib")
@@ -44,6 +46,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${RKNN_RT_INCLUDE_PATH}
     ${OpenCV_INCLUDE_DIRS}
+    ${JSONCPP_INCLUDE_DIRS}
 )
 
 # 如果使用简化依赖
@@ -108,8 +111,8 @@ ament_target_dependencies(${PROJECT_NAME}_display_node
     rclcpp 
     sensor_msgs 
     vision_msgs 
+    std_msgs
     cv_bridge 
-    stereo_camera_cpp
 )
 ament_target_dependencies(${PROJECT_NAME}_component ${ROS2_DEPENDENCIES})
 
@@ -130,7 +133,11 @@ target_link_libraries(${PROJECT_NAME}_component
 
 target_link_libraries(${PROJECT_NAME}_display_node
     ${OpenCV_LIBS}
+    ${JSONCPP_LIBRARIES}
 )
+
+# 添加jsoncpp编译标志
+target_compile_options(${PROJECT_NAME}_display_node PRIVATE ${JSONCPP_CFLAGS_OTHER})
 
 # 如果不使用简化依赖，链接原始工具库
 if(NOT USE_SIMPLIFIED_DEPS)

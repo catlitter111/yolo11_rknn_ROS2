@@ -125,7 +125,8 @@ def generate_launch_description():
         parameters=[{
             'input_topic': '/camera/color/image_raw',
             'detection_topic': '/detections',
-            'distance_service': '/depth_reader/get_depth_at',
+            'distance_request_topic': '/depth_reader/get_depth_at',
+            'distance_response_topic': '/depth_reader/depth_value',
             'window_name': 'YOLO11 + 距离检测',
             'enable_distance': True,
             'enable_debug': True,
