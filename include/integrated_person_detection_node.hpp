@@ -59,12 +59,21 @@ struct PersonInfo {
     float keypoints[17][3];
     bool has_keypoints;
     
-    PersonInfo() : distance(-1.0f), valid_distance(false), has_keypoints(false) {
+    // 身体比例信息 (16个身体比例)
+    float body_ratios[16];
+    bool has_body_ratios;
+    
+    PersonInfo() : distance(-1.0f), valid_distance(false), has_keypoints(false), has_body_ratios(false) {
         // 初始化关键点
         for (int i = 0; i < 17; i++) {
             keypoints[i][0] = 0.0f; // x
             keypoints[i][1] = 0.0f; // y 
             keypoints[i][2] = 0.0f; // confidence
+        }
+        
+        // 初始化身体比例
+        for (int i = 0; i < 16; i++) {
+            body_ratios[i] = 0.0f;
         }
     }
 };
@@ -113,6 +122,11 @@ private:
     void cleanupPoseModel();
     void detectPersonKeypoints(const cv::Mat& image, PersonInfo& person);
     cv::Mat extractPersonROI(const cv::Mat& image, const cv::Rect& person_bbox);
+    
+    // 身体比例计算
+    bool calculateBodyRatios(PersonInfo& person);
+    bool isValidKeypoint(const float keypoints[17][3], int idx);
+    float calculateKeypointDistance(const float keypoints[17][3], int idx1, int idx2);
     
     // 关键点可视化
     void drawKeypoints(cv::Mat& image, const PersonInfo& person);

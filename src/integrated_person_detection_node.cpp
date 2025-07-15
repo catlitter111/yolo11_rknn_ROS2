@@ -777,6 +777,38 @@ void IntegratedPersonDetectionNode::publishPersonPositions(const std::vector<Per
                 person_data["has_keypoints"] = false;
             }
             
+            // 添加身体比例信息
+            if (person.has_body_ratios) {
+                Json::Value ratios_array(Json::arrayValue);
+                for (int i = 0; i < 16; i++) {
+                    ratios_array.append(person.body_ratios[i]);
+                }
+                person_data["body_ratios"] = ratios_array;
+                person_data["has_body_ratios"] = true;
+                
+                // 添加身体比例标签说明
+                Json::Value ratio_labels(Json::arrayValue);
+                ratio_labels.append("上肢与下肢比例");
+                ratio_labels.append("躯干与身高比例");
+                ratio_labels.append("肩宽与身高比例");
+                ratio_labels.append("臀宽与肩宽比例");
+                ratio_labels.append("头部与躯干比例");
+                ratio_labels.append("手臂与身高比例");
+                ratio_labels.append("腿长与身高比例");
+                ratio_labels.append("上臂与下臂比例");
+                ratio_labels.append("大腿与小腿比例");
+                ratio_labels.append("躯干与腿长比例");
+                ratio_labels.append("手臂与腿长比例");
+                ratio_labels.append("肩宽与髋宽比例");
+                ratio_labels.append("头围与身高比例");
+                ratio_labels.append("脚长与身高比例");
+                ratio_labels.append("脚踝宽与身高比例");
+                ratio_labels.append("腰围与身高比例");
+                person_data["ratio_labels"] = ratio_labels;
+            } else {
+                person_data["has_body_ratios"] = false;
+            }
+            
             persons_array.append(person_data);
         }
         
@@ -1038,6 +1070,14 @@ void IntegratedPersonDetectionNode::detectPersonKeypoints(const cv::Mat& image, 
             }
             
             person.has_keypoints = true;
+            
+            // 计算身体比例
+            if (calculateBodyRatios(person)) {
+                RCLCPP_DEBUG(this->get_logger(), "成功计算人员 %s 的身体比例", person.person_id.c_str());
+            } else {
+                RCLCPP_DEBUG(this->get_logger(), "人员 %s 身体比例计算失败", person.person_id.c_str());
+            }
+            
             RCLCPP_DEBUG(this->get_logger(), "成功检测到人员 %s 的关键点", person.person_id.c_str());
             
         } else {
@@ -1136,4 +1176,188 @@ void IntegratedPersonDetectionNode::drawSkeleton(cv::Mat& image, const PersonInf
             }
         }
     }
+}
+
+// 身体比例计算实现
+bool IntegratedPersonDetectionNode::calculateBodyRatios(PersonInfo& person)
+{
+    if (!person.has_keypoints) {
+        RCLCPP_DEBUG(this->get_logger(), "没有关键点数据，无法计算身体比例");
+        return false;
+    }
+    
+    try {
+        // YOLOv8 Pose关键点索引定义:
+        // 0: 鼻子, 1: 左眼, 2: 右眼, 3: 左耳, 4: 右耳, 5: 左肩
+        // 6: 右肩, 7: 左肘, 8: 右肘, 9: 左腕, 10: 右腕, 11: 左髋
+        // 12: 右髋, 13: 左膝, 14: 右膝, 15: 左踝, 16: 右踝
+        
+        // 计算16个身体比例
+        std::vector<float> ratios(16, 0.0f);
+        
+        // 1. 上肢与下肢比例
+        float upper_limb = (calculateKeypointDistance(person.keypoints, 5, 7) + 
+                           calculateKeypointDistance(person.keypoints, 7, 9) + 
+                           calculateKeypointDistance(person.keypoints, 6, 8) + 
+                           calculateKeypointDistance(person.keypoints, 8, 10)) / 4.0f;
+                           
+        float lower_limb = (calculateKeypointDistance(person.keypoints, 11, 13) + 
+                           calculateKeypointDistance(person.keypoints, 13, 15) + 
+                           calculateKeypointDistance(person.keypoints, 12, 14) + 
+                           calculateKeypointDistance(person.keypoints, 14, 16)) / 4.0f;
+                           
+        if (upper_limb > 0 && lower_limb > 0) {
+            ratios[0] = upper_limb / lower_limb;
+        }
+        
+        // 2. 躯干与身高比例
+        float torso_height = (calculateKeypointDistance(person.keypoints, 5, 11) + 
+                             calculateKeypointDistance(person.keypoints, 6, 12)) / 2.0f;
+                             
+        float body_height = (calculateKeypointDistance(person.keypoints, 0, 15) + 
+                            calculateKeypointDistance(person.keypoints, 0, 16)) / 2.0f;
+                            
+        if (torso_height > 0 && body_height > 0) {
+            ratios[1] = torso_height / body_height;
+        }
+        
+        // 3. 肩宽与身高比例
+        float shoulder_width = calculateKeypointDistance(person.keypoints, 5, 6);
+        if (shoulder_width > 0 && body_height > 0) {
+            ratios[2] = shoulder_width / body_height;
+        }
+        
+        // 4. 臀宽与肩宽比例
+        float hip_width = calculateKeypointDistance(person.keypoints, 11, 12);
+        if (hip_width > 0 && shoulder_width > 0) {
+            ratios[3] = hip_width / shoulder_width;
+        }
+        
+        // 5. 头部与躯干比例
+        float head_height = (calculateKeypointDistance(person.keypoints, 0, 5) + 
+                            calculateKeypointDistance(person.keypoints, 0, 6)) / 2.0f;
+        if (head_height > 0 && torso_height > 0) {
+            ratios[4] = head_height / torso_height;
+        }
+        
+        // 6. 手臂与身高比例
+        float arm_length = (calculateKeypointDistance(person.keypoints, 5, 9) + 
+                           calculateKeypointDistance(person.keypoints, 6, 10)) / 2.0f;
+        if (arm_length > 0 && body_height > 0) {
+            ratios[5] = arm_length / body_height;
+        }
+        
+        // 7. 腿长与身高比例
+        float leg_length = (calculateKeypointDistance(person.keypoints, 11, 15) + 
+                           calculateKeypointDistance(person.keypoints, 12, 16)) / 2.0f;
+        if (leg_length > 0 && body_height > 0) {
+            ratios[6] = leg_length / body_height;
+        }
+        
+        // 8. 上臂与下臂比例
+        float upper_arm = (calculateKeypointDistance(person.keypoints, 5, 7) + 
+                          calculateKeypointDistance(person.keypoints, 6, 8)) / 2.0f;
+        float lower_arm = (calculateKeypointDistance(person.keypoints, 7, 9) + 
+                          calculateKeypointDistance(person.keypoints, 8, 10)) / 2.0f;
+        if (upper_arm > 0 && lower_arm > 0) {
+            ratios[7] = upper_arm / lower_arm;
+        }
+        
+        // 9. 大腿与小腿比例
+        float thigh = (calculateKeypointDistance(person.keypoints, 11, 13) + 
+                      calculateKeypointDistance(person.keypoints, 12, 14)) / 2.0f;
+        float calf = (calculateKeypointDistance(person.keypoints, 13, 15) + 
+                     calculateKeypointDistance(person.keypoints, 14, 16)) / 2.0f;
+        if (thigh > 0 && calf > 0) {
+            ratios[8] = thigh / calf;
+        }
+        
+        // 10. 躯干与腿长比例
+        if (torso_height > 0 && leg_length > 0) {
+            ratios[9] = torso_height / leg_length;
+        }
+        
+        // 11. 手臂与腿长比例
+        if (arm_length > 0 && leg_length > 0) {
+            ratios[10] = arm_length / leg_length;
+        }
+        
+        // 12. 肩宽与髋宽比例
+        if (shoulder_width > 0 && hip_width > 0) {
+            ratios[11] = shoulder_width / hip_width;
+        }
+        
+        // 13. 头围与身高比例（估算头围）
+        float head_width = calculateKeypointDistance(person.keypoints, 3, 4) * 1.2f; // 估算头围
+        if (head_width > 0 && body_height > 0) {
+            ratios[12] = head_width / body_height;
+        }
+        
+        // 14. 脚长与身高比例（估算脚长）
+        float foot_length = calculateKeypointDistance(person.keypoints, 15, 16) * 0.7f; // 估算脚长
+        if (foot_length > 0 && body_height > 0) {
+            ratios[13] = foot_length / body_height;
+        }
+        
+        // 15. 脚踝宽与身高比例
+        float ankle_width = calculateKeypointDistance(person.keypoints, 15, 16);
+        if (ankle_width > 0 && body_height > 0) {
+            ratios[14] = ankle_width / body_height;
+        }
+        
+        // 16. 腰围与身高比例（估算腰围）
+        float waist = hip_width * 0.85f; // 估算腰围
+        if (waist > 0 && body_height > 0) {
+            ratios[15] = waist / body_height;
+        }
+        
+        // 复制比例数据到PersonInfo
+        for (int i = 0; i < 16; i++) {
+            person.body_ratios[i] = ratios[i];
+        }
+        
+        // 检查是否有有效的比例数据
+        int valid_ratios = 0;
+        for (int i = 0; i < 16; i++) {
+            if (person.body_ratios[i] > 0.0f) {
+                valid_ratios++;
+            }
+        }
+        
+        person.has_body_ratios = (valid_ratios > 0);
+        
+        if (person.has_body_ratios) {
+            RCLCPP_DEBUG(this->get_logger(), "成功计算 %d/16 个有效身体比例", valid_ratios);
+        }
+        
+        return person.has_body_ratios;
+        
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "计算身体比例时出错: %s", e.what());
+        person.has_body_ratios = false;
+        return false;
+    }
+}
+
+bool IntegratedPersonDetectionNode::isValidKeypoint(const float keypoints[17][3], int idx)
+{
+    if (idx < 0 || idx >= 17) {
+        return false;
+    }
+    
+    return (keypoints[idx][2] > 0.5f &&  // 置信度阈值
+            keypoints[idx][0] > 0.0f &&  // x坐标有效
+            keypoints[idx][1] > 0.0f);   // y坐标有效
+}
+
+float IntegratedPersonDetectionNode::calculateKeypointDistance(const float keypoints[17][3], int idx1, int idx2)
+{
+    if (!isValidKeypoint(keypoints, idx1) || !isValidKeypoint(keypoints, idx2)) {
+        return 0.0f;
+    }
+    
+    float dx = keypoints[idx1][0] - keypoints[idx2][0];
+    float dy = keypoints[idx1][1] - keypoints[idx2][1];
+    
+    return std::sqrt(dx * dx + dy * dy);
 }
