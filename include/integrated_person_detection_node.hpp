@@ -25,10 +25,12 @@ struct ClothingDetection {
     float confidence;
     int class_id;
     std::string category;  // "upper" or "lower"
+    std::string color;     // 主要颜色名称
+    cv::Scalar color_rgb;  // RGB颜色值
     bool has_upper;
     bool has_lower;
     
-    ClothingDetection() : has_upper(false), has_lower(false) {}
+    ClothingDetection() : color("unknown"), color_rgb(cv::Scalar(128, 128, 128)), has_upper(false), has_lower(false) {}
 };
 
 // 服装配对结构
@@ -84,6 +86,11 @@ private:
     bool isLowerClothing(int class_id);
     float calculateDistance(const cv::Point2f& p1, const cv::Point2f& p2);
     cv::Point2f calculateCenter(const cv::Rect& bbox);
+    
+    // 颜色检测函数
+    void detectClothingColor(const cv::Mat& image, ClothingDetection& detection);
+    std::string getColorName(const cv::Scalar& hsv_color);
+    cv::Scalar getMainColor(const cv::Mat& roi);
     
     // 距离查询
     void queryDistance(const cv::Point2f& point, const std::string& person_id);

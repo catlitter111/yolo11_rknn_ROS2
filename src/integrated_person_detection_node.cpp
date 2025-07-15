@@ -267,6 +267,9 @@ std::vector<ClothingDetection> IntegratedPersonDetectionNode::detectClothing(con
             detection.has_upper = false;
             detection.has_lower = false;
             
+            // 检测服装颜色
+            detectClothingColor(image, detection);
+            
             detections.push_back(detection);
             
             RCLCPP_DEBUG(this->get_logger(), "检测到服装: 类别=%s, 置信度=%.2f, 位置=(%d,%d,%d,%d)", 
@@ -589,26 +592,50 @@ cv::Mat IntegratedPersonDetectionNode::publishVisualization(const cv::Mat& image
                        cv::Point(person.person_bbox.x, person.person_bbox.y - 10),
                        cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
             
-            // 绘制上衣边界框
+            // 绘制上衣边界框和颜色信息
             if (person.clothing.has_upper) {
                 cv::rectangle(vis_image, person.clothing.upper.bbox, cv::Scalar(255, 0, 0), 2);
                 
-                std::string upper_text = "Upper: " + 
-                    std::to_string(static_cast<int>(person.clothing.upper.confidence * 100)) + "%";
-                cv::putText(vis_image, upper_text,
-                           cv::Point(person.clothing.upper.bbox.x, person.clothing.upper.bbox.y - 10),
-                           cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1);
+                // 显示颜色信息（在边界框内）
+                std::string upper_color = "upper:" + person.clothing.upper.color;
+                cv::Point color_pos(person.clothing.upper.bbox.x + 5, 
+                                   person.clothing.upper.bbox.y + 20);
+                
+                // 绘制颜色背景
+                int baseline = 0;
+                cv::Size color_text_size = cv::getTextSize(upper_color, cv::FONT_HERSHEY_SIMPLEX, 
+                                                         0.6, 2, &baseline);
+                cv::rectangle(vis_image, 
+                            cv::Point(color_pos.x - 2, color_pos.y - color_text_size.height - 2),
+                            cv::Point(color_pos.x + color_text_size.width + 2, color_pos.y + baseline + 2),
+                            cv::Scalar(0, 0, 0), -1); // 黑色背景
+                
+                // 绘制颜色文字
+                cv::putText(vis_image, upper_color, color_pos,
+                           cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(255, 255, 255), 2);
             }
             
-            // 绘制下装边界框
+            // 绘制下装边界框和颜色信息
             if (person.clothing.has_lower) {
                 cv::rectangle(vis_image, person.clothing.lower.bbox, cv::Scalar(0, 0, 255), 2);
                 
-                std::string lower_text = "Lower: " + 
-                    std::to_string(static_cast<int>(person.clothing.lower.confidence * 100)) + "%";
-                cv::putText(vis_image, lower_text,
-                           cv::Point(person.clothing.lower.bbox.x, person.clothing.lower.bbox.y - 10),
-                           cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255), 1);
+                // 显示颜色信息（在边界框内）
+                std::string lower_color = "lower:" + person.clothing.lower.color;
+                cv::Point color_pos(person.clothing.lower.bbox.x + 5, 
+                                   person.clothing.lower.bbox.y + 20);
+                
+                // 绘制颜色背景
+                int baseline = 0;
+                cv::Size color_text_size = cv::getTextSize(lower_color, cv::FONT_HERSHEY_SIMPLEX, 
+                                                         0.6, 2, &baseline);
+                cv::rectangle(vis_image, 
+                            cv::Point(color_pos.x - 2, color_pos.y - color_text_size.height - 2),
+                            cv::Point(color_pos.x + color_text_size.width + 2, color_pos.y + baseline + 2),
+                            cv::Scalar(0, 0, 0), -1); // 黑色背景
+                
+                // 绘制颜色文字
+                cv::putText(vis_image, lower_color, color_pos,
+                           cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(255, 255, 255), 2);
             }
             
             // 显示距离信息
@@ -624,14 +651,14 @@ cv::Mat IntegratedPersonDetectionNode::publishVisualization(const cv::Mat& image
                 int baseline = 0;
                 cv::Size text_size = cv::getTextSize(ss.str(), cv::FONT_HERSHEY_SIMPLEX, 
                                                    1.2, 3, &baseline);
-                cv::rectangle(vis_image, 
-                            cv::Point(text_pos.x - 5, text_pos.y - text_size.height - 5),
-                            cv::Point(text_pos.x + text_size.width + 5, text_pos.y + baseline + 5),
-                            cv::Scalar(0, 0, 0), -1); // 黑色背景
+                // cv::rectangle(vis_image, 
+                //             cv::Point(text_pos.x - 5, text_pos.y - text_size.height - 5),
+                //             cv::Point(text_pos.x + text_size.width + 5, text_pos.y + baseline + 5),
+                //             cv::Scalar(0, 0, 0), -1); // 黑色背景
                 
-                // 绘制距离文字 - 更大字体，白色，更厚
-                cv::putText(vis_image, ss.str(), text_pos,
-                           cv::FONT_HERSHEY_SIMPLEX, 1.2, cv::Scalar(255, 255, 255), 3);
+                // // 绘制距离文字 - 更大字体，白色，更厚
+                // cv::putText(vis_image, ss.str(), text_pos,
+                //            cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 3);
             }
             
             // 标记中心点
@@ -687,6 +714,22 @@ void IntegratedPersonDetectionNode::publishPersonPositions(const std::vector<Per
             person_data["distance"] = person.valid_distance ? person.distance : Json::Value::null;
             person_data["valid_distance"] = person.valid_distance;
             
+            // 添加服装颜色信息
+            Json::Value clothing_data;
+            if (person.clothing.has_upper) {
+                Json::Value upper_data;
+                upper_data["color"] = person.clothing.upper.color;
+                upper_data["confidence"] = person.clothing.upper.confidence;
+                clothing_data["upper"] = upper_data;
+            }
+            if (person.clothing.has_lower) {
+                Json::Value lower_data;
+                lower_data["color"] = person.clothing.lower.color;
+                lower_data["confidence"] = person.clothing.lower.confidence;
+                clothing_data["lower"] = lower_data;
+            }
+            person_data["clothing"] = clothing_data;
+            
             persons_array.append(person_data);
         }
         
@@ -724,4 +767,125 @@ void IntegratedPersonDetectionNode::displayDebugImage(const cv::Mat& image)
     } catch (const std::exception& e) {
         RCLCPP_ERROR(this->get_logger(), "显示调试图像时出错: %s", e.what());
     }
-} 
+}
+
+// 颜色检测函数实现
+void IntegratedPersonDetectionNode::detectClothingColor(const cv::Mat& image, ClothingDetection& detection)
+{
+    try {
+        // 确保边界框在图像范围内
+        cv::Rect safe_bbox = detection.bbox & cv::Rect(0, 0, image.cols, image.rows);
+        if (safe_bbox.width <= 0 || safe_bbox.height <= 0) {
+            detection.color = "unknown";
+            detection.color_rgb = cv::Scalar(128, 128, 128);
+            return;
+        }
+        
+        // 提取服装区域
+        cv::Mat roi = image(safe_bbox);
+        
+        // 获取主要颜色
+        cv::Scalar main_color = getMainColor(roi);
+        detection.color_rgb = main_color;
+        
+        // 转换为HSV进行颜色分类
+        cv::Mat bgr_sample(1, 1, CV_8UC3);
+        bgr_sample.at<cv::Vec3b>(0, 0) = cv::Vec3b(
+            static_cast<uchar>(main_color[0]), // B
+            static_cast<uchar>(main_color[1]), // G  
+            static_cast<uchar>(main_color[2])  // R
+        );
+        cv::Mat hsv_converted;
+        cv::cvtColor(bgr_sample, hsv_converted, cv::COLOR_BGR2HSV);
+        cv::Vec3b hsv_pixel = hsv_converted.at<cv::Vec3b>(0, 0);
+        cv::Scalar hsv_color(hsv_pixel[0], hsv_pixel[1], hsv_pixel[2]);
+        
+        // 获取颜色名称
+        detection.color = getColorName(hsv_color);
+        
+        RCLCPP_INFO(this->get_logger(), "detect %s color: %s, BGR(%.0f,%.0f,%.0f), HSV(%.0f,%.0f,%.0f)", 
+                    detection.category.c_str(), detection.color.c_str(),
+                    main_color[0], main_color[1], main_color[2], // BGR原始顺序
+                    hsv_color[0], hsv_color[1], hsv_color[2]); // HSV值
+        
+    } catch (const std::exception& e) {
+        RCLCPP_WARN(this->get_logger(), "颜色检测出错: %s", e.what());
+        detection.color = "unknown";
+        detection.color_rgb = cv::Scalar(128, 128, 128);
+    }
+}
+
+cv::Scalar IntegratedPersonDetectionNode::getMainColor(const cv::Mat& roi)
+{
+    // 缩小ROI以提高性能
+    cv::Mat small_roi;
+    cv::resize(roi, small_roi, cv::Size(32, 32));
+    
+    // 直接计算平均颜色，不使用复杂的掩码
+    // 因为服装检测已经给出了相对准确的边界框
+    cv::Scalar mean_color = cv::mean(small_roi);
+    
+    RCLCPP_DEBUG(rclcpp::get_logger("color_debug"), 
+                "ROI size: %dx%d, Mean BGR: (%.1f, %.1f, %.1f)", 
+                small_roi.cols, small_roi.rows, 
+                mean_color[0], mean_color[1], mean_color[2]);
+    
+    return mean_color;
+}
+
+std::string IntegratedPersonDetectionNode::getColorName(const cv::Scalar& hsv_color)
+{
+    int h = static_cast<int>(hsv_color[0]);
+    int s = static_cast<int>(hsv_color[1]);
+    int v = static_cast<int>(hsv_color[2]);
+    
+    RCLCPP_INFO(rclcpp::get_logger("color_debug"), 
+               "HSV analysis: H=%d, S=%d, V=%d", h, s, v);
+    
+    // 优化的颜色判断逻辑
+    // 首先判断亮度极值
+    if (v < 30) {
+        RCLCPP_INFO(rclcpp::get_logger("color_debug"), "Very dark -> black");
+        return "black";
+    }
+    
+    if (v > 240 && s < 20) {
+        RCLCPP_INFO(rclcpp::get_logger("color_debug"), "Very bright + low saturation -> white");
+        return "white";
+    }
+    
+    // 低饱和度的情况（黑白灰）
+    if (s < 25) {
+        if (v < 80) {
+            RCLCPP_INFO(rclcpp::get_logger("color_debug"), "Low saturation + dark -> black");
+            return "black";
+        } else if (v > 180) {
+            RCLCPP_INFO(rclcpp::get_logger("color_debug"), "Low saturation + bright -> white");
+            return "white";
+        } else {
+            RCLCPP_INFO(rclcpp::get_logger("color_debug"), "Low saturation + medium -> gray");
+            return "gray";
+        }
+    }
+    
+    // 中等亮度但低饱和度
+    if (v < 80) {
+        RCLCPP_INFO(rclcpp::get_logger("color_debug"), "Low brightness -> dark");
+        return "dark";
+    }
+    
+    // 根据色相判断彩色
+    std::string color_result;
+    if (h < 8 || h >= 172) color_result = "red";
+    else if (h < 25) color_result = "orange";  
+    else if (h < 35) color_result = "yellow";
+    else if (h < 78) color_result = "green";
+    else if (h < 125) color_result = "blue";
+    else if (h < 155) color_result = "purple";
+    else color_result = "pink";
+    
+    RCLCPP_INFO(rclcpp::get_logger("color_debug"), 
+               "Color based on hue %d -> %s", h, color_result.c_str());
+    
+    return color_result;
+}
