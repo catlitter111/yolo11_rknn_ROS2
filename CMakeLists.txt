@@ -122,6 +122,8 @@ add_executable(integrated_person_detection_node
     src/main_integrated.cpp
     src/integrated_person_detection_node.cpp
     ${RKNN_SRCS}
+    src/postprocess_pose.cc
+    src/yolov8_pose.cc
     ${SIMPLIFIED_UTILS_SRCS}
 )
 

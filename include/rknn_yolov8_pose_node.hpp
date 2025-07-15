@@ -25,10 +25,10 @@ public:
 private:
     void image_callback(const sensor_msgs::msg::Image::SharedPtr msg);
     void process_image(const cv::Mat& image);
-    void create_detection_messages(const object_detect_result_list& results, 
+    void create_detection_messages(const pose_object_detect_result_list& results, 
                                    const std_msgs::msg::Header& header);
-    void draw_keypoints(cv::Mat& image, const object_detect_result& result);
-    void draw_skeleton(cv::Mat& image, const object_detect_result& result);
+    void draw_keypoints(cv::Mat& image, const pose_object_detect_result& result);
+    void draw_skeleton(cv::Mat& image, const pose_object_detect_result& result);
     
     // ROS2 components
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;

@@ -11,6 +11,8 @@
 #include <rmw/qos_profiles.h>
 
 #include "yolo11.h"
+#include "yolov8_pose.h"
+#include "postprocess_pose.h"
 #include "common.h"
 #include "image_utils.h"
 #include <vector>
@@ -53,7 +55,18 @@ struct PersonInfo {
     bool valid_distance;
     std::chrono::steady_clock::time_point last_update;
     
-    PersonInfo() : distance(-1.0f), valid_distance(false) {}
+    // 关键点信息 (17个COCO关键点，每个3个值：x, y, confidence)
+    float keypoints[17][3];
+    bool has_keypoints;
+    
+    PersonInfo() : distance(-1.0f), valid_distance(false), has_keypoints(false) {
+        // 初始化关键点
+        for (int i = 0; i < 17; i++) {
+            keypoints[i][0] = 0.0f; // x
+            keypoints[i][1] = 0.0f; // y 
+            keypoints[i][2] = 0.0f; // confidence
+        }
+    }
 };
 
 // 距离查询请求
@@ -95,6 +108,16 @@ private:
     // 距离查询
     void queryDistance(const cv::Point2f& point, const std::string& person_id);
     
+    // YOLOv8 Pose关键点检测
+    bool initializePoseModel();
+    void cleanupPoseModel();
+    void detectPersonKeypoints(const cv::Mat& image, PersonInfo& person);
+    cv::Mat extractPersonROI(const cv::Mat& image, const cv::Rect& person_bbox);
+    
+    // 关键点可视化
+    void drawKeypoints(cv::Mat& image, const PersonInfo& person);
+    void drawSkeleton(cv::Mat& image, const PersonInfo& person);
+    
     // 可视化和发布
     cv::Mat publishVisualization(const cv::Mat& image, const std::vector<PersonInfo>& persons);
     void publishPersonPositions(const std::vector<PersonInfo>& persons);
@@ -119,6 +142,12 @@ private:
     rknn_app_context_t rknn_app_ctx_;
     bool models_initialized_;
     
+    // YOLOv8 Pose模型相关
+    rknn_app_context_t pose_rknn_app_ctx_;
+    bool pose_models_initialized_;
+    std::string pose_model_path_;
+    float keypoint_confidence_threshold_;
+    
     // 参数
     std::string model_path_;
     std::string input_topic_;
@@ -142,6 +171,9 @@ private:
     // 性能监控
     int frame_count_;
     std::chrono::steady_clock::time_point last_fps_time_;
+    
+    // 骨骼连接关系 (COCO格式)
+    std::vector<std::pair<int, int>> skeleton_connections_;
     
     // OpenCV显示窗口
     bool display_enabled_;

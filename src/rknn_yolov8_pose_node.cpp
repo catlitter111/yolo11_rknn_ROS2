@@ -56,7 +56,7 @@ RknnYolov8PoseNode::RknnYolov8PoseNode() : Node("rknn_yolov8_pose_node"), frame_
     memset(&rknn_app_ctx_, 0, sizeof(rknn_app_context_t));
     
     // 初始化后处理
-    if (init_post_process() != 0) {
+    if (init_pose_post_process() != 0) {
         RCLCPP_ERROR(this->get_logger(), "Failed to init post process");
         return;
     }
@@ -91,7 +91,7 @@ RknnYolov8PoseNode::~RknnYolov8PoseNode()
 {
     // 释放模型资源
     release_yolov8_pose_model(&rknn_app_ctx_);
-    deinit_post_process();
+    deinit_pose_post_process();
     
     RCLCPP_INFO(this->get_logger(), "YOLOv8 pose node destroyed");
 }
@@ -130,7 +130,7 @@ void RknnYolov8PoseNode::process_image(const cv::Mat& image)
     src_image.virt_addr = rgb_image.data;
     
     // 执行推理
-    object_detect_result_list od_results;
+    pose_object_detect_result_list od_results;
     int ret = inference_yolov8_pose_model(&rknn_app_ctx_, &src_image, &od_results);
     
     if (ret != 0) {
@@ -148,7 +148,7 @@ void RknnYolov8PoseNode::process_image(const cv::Mat& image)
     
     // 处理检测结果
     for (int i = 0; i < od_results.count; i++) {
-        const object_detect_result& result = od_results.results[i];
+        const pose_object_detect_result& result = od_results.results[i];
         
         // 创建检测对象消息
         vision_msgs::msg::Detection2D detection;
@@ -228,7 +228,7 @@ void RknnYolov8PoseNode::process_image(const cv::Mat& image)
     if (od_results.count > 0) {
         RCLCPP_INFO(this->get_logger(), "Detected %d objects", od_results.count);
         for (int i = 0; i < od_results.count; i++) {
-            const object_detect_result& result = od_results.results[i];
+            const pose_object_detect_result& result = od_results.results[i];
             RCLCPP_INFO(this->get_logger(), "  %s @ (%d %d %d %d) %.3f",
                        coco_cls_to_name(result.cls_id),
                        result.box.left, result.box.top,
@@ -238,7 +238,7 @@ void RknnYolov8PoseNode::process_image(const cv::Mat& image)
     }
 }
 
-void RknnYolov8PoseNode::draw_keypoints(cv::Mat& image, const object_detect_result& result)
+void RknnYolov8PoseNode::draw_keypoints(cv::Mat& image, const pose_object_detect_result& result)
 {
     // 绘制关键点
     for (int k = 0; k < 17; k++) {
@@ -274,7 +274,7 @@ void RknnYolov8PoseNode::draw_keypoints(cv::Mat& image, const object_detect_resu
     }
 }
 
-void RknnYolov8PoseNode::draw_skeleton(cv::Mat& image, const object_detect_result& result)
+void RknnYolov8PoseNode::draw_skeleton(cv::Mat& image, const pose_object_detect_result& result)
 {
     // 绘制骨架连接
     for (const auto& connection : skeleton_connections_) {
@@ -321,13 +321,13 @@ void RknnYolov8PoseNode::draw_skeleton(cv::Mat& image, const object_detect_resul
     }
 }
 
-void RknnYolov8PoseNode::create_detection_messages(const object_detect_result_list& results, 
+void RknnYolov8PoseNode::create_detection_messages(const pose_object_detect_result_list& results, 
                                                    const std_msgs::msg::Header& header)
 {
     // 这里可以添加更多的检测结果处理逻辑
     // 目前简化处理，仅打印关键点信息
     for (int i = 0; i < results.count; i++) {
-        const object_detect_result& result = results.results[i];
+        const pose_object_detect_result& result = results.results[i];
         
         std::string keypoint_info = "Keypoints: ";
         for (int k = 0; k < 17; k++) {

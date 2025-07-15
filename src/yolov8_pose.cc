@@ -153,15 +153,15 @@ int release_yolov8_pose_model(rknn_app_context_t *app_ctx)
     return 0;
 }
 
-int inference_yolov8_pose_model(rknn_app_context_t *app_ctx, image_buffer_t *img, object_detect_result_list *od_results)
+int inference_yolov8_pose_model(rknn_app_context_t *app_ctx, image_buffer_t *img, pose_object_detect_result_list *od_results)
 {
     int ret;
     image_buffer_t dst_img;
     letterbox_t letter_box;
     rknn_input inputs[app_ctx->io_num.n_input];
     rknn_output outputs[app_ctx->io_num.n_output];
-    const float nms_threshold = NMS_THRESH;      // Default NMS threshold
-    const float box_conf_threshold = BOX_THRESH; // Default box threshold
+    const float nms_threshold = POSE_NMS_THRESH;      // Default NMS threshold
+    const float box_conf_threshold = POSE_BOX_THRESH; // Default box threshold
     int bg_color = 114;
 
     if ((!app_ctx) || !(img) || (!od_results))

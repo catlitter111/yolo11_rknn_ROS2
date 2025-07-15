@@ -6,10 +6,11 @@
 #include <sstream>
 
 IntegratedPersonDetectionNode::IntegratedPersonDetectionNode(const rclcpp::NodeOptions & options)
-: Node("integrated_person_detection_node", options), models_initialized_(false), frame_count_(0)
+: Node("integrated_person_detection_node", options), models_initialized_(false), pose_models_initialized_(false), frame_count_(0)
 {
     // 声明参数
-    this->declare_parameter("model_path", "./model/cloth.rknn");
+    this->declare_parameter("model_path", "/userdata/rknn_yolo11_ros2/model/cloth.rknn");
+    this->declare_parameter("pose_model_path", "/userdata/rknn_yolo11_ros2/model/yolov8_pose.rknn");
     this->declare_parameter("input_topic", "/camera/color/image_raw");
     this->declare_parameter("person_topic", "/person_detection/person_positions");
     this->declare_parameter("distance_query_topic", "/depth_reader/get_depth_at");
@@ -18,9 +19,11 @@ IntegratedPersonDetectionNode::IntegratedPersonDetectionNode(const rclcpp::NodeO
     this->declare_parameter("confidence_threshold", 0.3);
     this->declare_parameter("nms_threshold", 0.5);
     this->declare_parameter("enable_debug_display", true);
+    this->declare_parameter("keypoint_confidence_threshold", 0.3);
     
     // 获取参数
     this->get_parameter("model_path", model_path_);
+    this->get_parameter("pose_model_path", pose_model_path_);
     this->get_parameter("input_topic", input_topic_);
     this->get_parameter("person_topic", person_topic_);
     this->get_parameter("distance_query_topic", distance_query_topic_);
@@ -29,9 +32,18 @@ IntegratedPersonDetectionNode::IntegratedPersonDetectionNode(const rclcpp::NodeO
     this->get_parameter("confidence_threshold", confidence_threshold_);
     this->get_parameter("nms_threshold", nms_threshold_);
     this->get_parameter("enable_debug_display", enable_debug_display_);
+    this->get_parameter("keypoint_confidence_threshold", keypoint_confidence_threshold_);
     
     // 初始化服装类别映射（基于YOLO11服装检测模型）
     initializeClothingCategories();
+    
+    // 初始化骨骼连接关系 (COCO格式)
+    skeleton_connections_ = {
+        {16, 14}, {14, 12}, {17, 15}, {15, 13}, {12, 13},
+        {6, 12}, {7, 13}, {6, 7}, {6, 8}, {7, 9},
+        {8, 10}, {9, 11}, {2, 3}, {1, 2}, {1, 3},
+        {2, 4}, {3, 5}, {4, 6}, {5, 7}
+    };
     
     // 初始化显示窗口
     window_name_ = "Integrated Person Detection";
@@ -43,7 +55,13 @@ IntegratedPersonDetectionNode::IntegratedPersonDetectionNode(const rclcpp::NodeO
     
     // 初始化模型
     if (!initializeModel()) {
-        RCLCPP_ERROR(this->get_logger(), "模型初始化失败！");
+        RCLCPP_ERROR(this->get_logger(), "服装检测模型初始化失败！");
+        return;
+    }
+    
+    // 初始化YOLOv8 Pose模型
+    if (!initializePoseModel()) {
+        RCLCPP_ERROR(this->get_logger(), "YOLOv8 Pose模型初始化失败！");
         return;
     }
     
@@ -68,6 +86,7 @@ IntegratedPersonDetectionNode::~IntegratedPersonDetectionNode()
         cv::destroyAllWindows();
     }
     cleanupModel();
+    cleanupPoseModel();
     RCLCPP_INFO(this->get_logger(), "集成人员检测节点销毁");
 }
 
@@ -187,16 +206,22 @@ void IntegratedPersonDetectionNode::imageCallback(const sensor_msgs::msg::Image:
         std::vector<PersonInfo> persons = determinePersonPositions(pairs, image);
         RCLCPP_DEBUG(this->get_logger(), "步骤3: 确定了 %zu 个人员位置", persons.size());
         
-        // 4. 查询距离信息
+        // 4. 检测关键点
+        for (auto& person : persons) {
+            detectPersonKeypoints(image, person);
+        }
+        RCLCPP_DEBUG(this->get_logger(), "步骤4: 完成关键点检测");
+        
+        // 5. 查询距离信息
         for (auto& person : persons) {
             queryDistance(person.center, person.person_id);
         }
         
-        // 5. 发布结果
+        // 6. 发布结果
         publishPersonPositions(persons);
         cv::Mat vis_image = publishVisualization(image, persons);
         
-        // 6. 显示调试图像
+        // 7. 显示调试图像
         if (display_enabled_) {
             displayDebugImage(vis_image);
         }
@@ -664,6 +689,12 @@ cv::Mat IntegratedPersonDetectionNode::publishVisualization(const cv::Mat& image
             // 标记中心点
             cv::circle(vis_image, cv::Point(static_cast<int>(person.center.x), 
                                            static_cast<int>(person.center.y)), 5, cv::Scalar(255, 0, 0), -1);
+            
+            // 绘制关键点和骨架
+            if (person.has_keypoints) {
+                drawKeypoints(vis_image, person);
+                drawSkeleton(vis_image, person);
+            }
         }
         
         // 添加统计信息
@@ -729,6 +760,22 @@ void IntegratedPersonDetectionNode::publishPersonPositions(const std::vector<Per
                 clothing_data["lower"] = lower_data;
             }
             person_data["clothing"] = clothing_data;
+            
+            // 添加关键点信息
+            if (person.has_keypoints) {
+                Json::Value keypoints_array(Json::arrayValue);
+                for (int i = 0; i < 17; i++) {
+                    Json::Value keypoint_data(Json::arrayValue);
+                    keypoint_data.append(person.keypoints[i][0]); // x
+                    keypoint_data.append(person.keypoints[i][1]); // y
+                    keypoint_data.append(person.keypoints[i][2]); // confidence
+                    keypoints_array.append(keypoint_data);
+                }
+                person_data["keypoints"] = keypoints_array;
+                person_data["has_keypoints"] = true;
+            } else {
+                person_data["has_keypoints"] = false;
+            }
             
             persons_array.append(person_data);
         }
@@ -888,4 +935,205 @@ std::string IntegratedPersonDetectionNode::getColorName(const cv::Scalar& hsv_co
                "Color based on hue %d -> %s", h, color_result.c_str());
     
     return color_result;
+}
+
+// YOLOv8 Pose模型初始化
+bool IntegratedPersonDetectionNode::initializePoseModel()
+{
+    memset(&pose_rknn_app_ctx_, 0, sizeof(rknn_app_context_t));
+    
+    // 初始化YOLOv8 Pose后处理
+    if (init_pose_post_process() != 0) {
+        RCLCPP_ERROR(this->get_logger(), "初始化姿态后处理失败");
+        return false;
+    }
+    
+    // 初始化YOLOv8 Pose模型
+    int ret = init_yolov8_pose_model(pose_model_path_.c_str(), &pose_rknn_app_ctx_);
+    if (ret != 0) {
+        RCLCPP_ERROR(this->get_logger(), "YOLOv8 Pose模型初始化失败! ret=%d model_path=%s", 
+                     ret, pose_model_path_.c_str());
+        return false;
+    }
+    
+    pose_models_initialized_ = true;
+    RCLCPP_INFO(this->get_logger(), "YOLOv8 Pose模型初始化成功");
+    return true;
+}
+
+void IntegratedPersonDetectionNode::cleanupPoseModel()
+{
+    if (pose_models_initialized_) {
+        release_yolov8_pose_model(&pose_rknn_app_ctx_);
+        deinit_pose_post_process();
+        pose_models_initialized_ = false;
+    }
+}
+
+cv::Mat IntegratedPersonDetectionNode::extractPersonROI(const cv::Mat& image, const cv::Rect& person_bbox)
+{
+    // 确保边界框在图像范围内
+    cv::Rect safe_bbox = person_bbox & cv::Rect(0, 0, image.cols, image.rows);
+    if (safe_bbox.width <= 0 || safe_bbox.height <= 0) {
+        RCLCPP_WARN(this->get_logger(), "无效的人体边界框");
+        return cv::Mat();
+    }
+    
+    // 提取人体区域
+    cv::Mat person_roi = image(safe_bbox);
+    
+    // 可选：对ROI进行预处理（如调整大小等）
+    // 这里保持原始大小，让模型内部处理
+    
+    return person_roi.clone();
+}
+
+void IntegratedPersonDetectionNode::detectPersonKeypoints(const cv::Mat& image, PersonInfo& person)
+{
+    if (!pose_models_initialized_) {
+        RCLCPP_WARN(this->get_logger(), "YOLOv8 Pose模型未初始化");
+        return;
+    }
+    
+    try {
+        // 提取人体区域
+        cv::Mat person_roi = extractPersonROI(image, person.person_bbox);
+        if (person_roi.empty()) {
+            RCLCPP_WARN(this->get_logger(), "无法提取人体区域 for %s", person.person_id.c_str());
+            return;
+        }
+        
+        // 准备图像数据
+        image_buffer_t src_image;
+        memset(&src_image, 0, sizeof(image_buffer_t));
+        
+        src_image.width = person_roi.cols;
+        src_image.height = person_roi.rows;
+        src_image.format = IMAGE_FORMAT_RGB888;
+        src_image.size = person_roi.cols * person_roi.rows * 3;
+        
+        // 转换BGR到RGB
+        cv::Mat rgb_image;
+        cv::cvtColor(person_roi, rgb_image, cv::COLOR_BGR2RGB);
+        src_image.virt_addr = rgb_image.data;
+        
+        // 执行推理
+        pose_object_detect_result_list od_results;
+        int ret = inference_yolov8_pose_model(&pose_rknn_app_ctx_, &src_image, &od_results);
+        
+        if (ret == 0 && od_results.count > 0) {
+            // 取第一个检测结果（应该是最高置信度的人体）
+            const pose_object_detect_result& result = od_results.results[0];
+            
+            // 将关键点坐标转换回原图坐标系
+            cv::Rect safe_bbox = person.person_bbox & cv::Rect(0, 0, image.cols, image.rows);
+            float scale_x = static_cast<float>(person_roi.cols) / safe_bbox.width;
+            float scale_y = static_cast<float>(person_roi.rows) / safe_bbox.height;
+            
+            for (int i = 0; i < 17; i++) {
+                // 转换坐标：ROI坐标 -> 原图坐标
+                person.keypoints[i][0] = result.keypoints[i][0] / scale_x + safe_bbox.x;
+                person.keypoints[i][1] = result.keypoints[i][1] / scale_y + safe_bbox.y;
+                person.keypoints[i][2] = result.keypoints[i][2]; // 置信度保持不变
+            }
+            
+            person.has_keypoints = true;
+            RCLCPP_DEBUG(this->get_logger(), "成功检测到人员 %s 的关键点", person.person_id.c_str());
+            
+        } else {
+            RCLCPP_DEBUG(this->get_logger(), "人员 %s 关键点检测失败 ret=%d, count=%d", 
+                        person.person_id.c_str(), ret, od_results.count);
+            person.has_keypoints = false;
+        }
+        
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "关键点检测异常: %s", e.what());
+        person.has_keypoints = false;
+    }
+}
+
+void IntegratedPersonDetectionNode::drawKeypoints(cv::Mat& image, const PersonInfo& person)
+{
+    if (!person.has_keypoints) return;
+    
+    // 绘制关键点
+    for (int k = 0; k < 17; k++) {
+        float x = person.keypoints[k][0];
+        float y = person.keypoints[k][1];
+        float conf = person.keypoints[k][2];
+        
+        // 检查关键点是否在图像范围内且置信度足够
+        if (conf > keypoint_confidence_threshold_ && 
+            x >= 0 && x < image.cols && y >= 0 && y < image.rows) {
+            
+            // 根据置信度调整颜色
+            cv::Scalar color;
+            if (conf > 0.7) {
+                color = cv::Scalar(0, 255, 0);  // 绿色 - 高置信度
+            } else if (conf > 0.5) {
+                color = cv::Scalar(0, 255, 255); // 黄色 - 中等置信度
+            } else {
+                color = cv::Scalar(0, 165, 255); // 橙色 - 低置信度
+            }
+            
+            cv::circle(image, cv::Point(static_cast<int>(x), static_cast<int>(y)), 
+                      4, color, -1);
+            
+            // 绘制关键点编号
+            cv::putText(image, std::to_string(k), 
+                       cv::Point(static_cast<int>(x)+3, static_cast<int>(y)-3),
+                       cv::FONT_HERSHEY_SIMPLEX, 0.3, color, 1);
+        }
+    }
+}
+
+void IntegratedPersonDetectionNode::drawSkeleton(cv::Mat& image, const PersonInfo& person)
+{
+    if (!person.has_keypoints) return;
+    
+    // 绘制骨架连接
+    for (const auto& connection : skeleton_connections_) {
+        int idx1 = connection.first - 1;  // 转换为0-based索引
+        int idx2 = connection.second - 1;
+        
+        if (idx1 >= 0 && idx1 < 17 && idx2 >= 0 && idx2 < 17) {
+            float x1 = person.keypoints[idx1][0];
+            float y1 = person.keypoints[idx1][1];
+            float conf1 = person.keypoints[idx1][2];
+            
+            float x2 = person.keypoints[idx2][0];
+            float y2 = person.keypoints[idx2][1];
+            float conf2 = person.keypoints[idx2][2];
+            
+            // 检查坐标是否在图像范围内
+            bool valid1 = conf1 > keypoint_confidence_threshold_ && 
+                         x1 >= 0 && x1 < image.cols && y1 >= 0 && y1 < image.rows;
+            bool valid2 = conf2 > keypoint_confidence_threshold_ && 
+                         x2 >= 0 && x2 < image.cols && y2 >= 0 && y2 < image.rows;
+            
+            // 只绘制两个关键点都有效的连接
+            if (valid1 && valid2) {
+                // 根据置信度调整线条颜色和粗细
+                cv::Scalar color;
+                int thickness;
+                float avg_conf = (conf1 + conf2) / 2.0;
+                
+                if (avg_conf > 0.7) {
+                    color = cv::Scalar(0, 255, 0);  // 绿色 - 高置信度
+                    thickness = 3;
+                } else if (avg_conf > 0.5) {
+                    color = cv::Scalar(255, 165, 0); // 橙色 - 中等置信度
+                    thickness = 2;
+                } else {
+                    color = cv::Scalar(0, 165, 255); // 橙色 - 低置信度
+                    thickness = 1;
+                }
+                
+                cv::line(image, 
+                        cv::Point(static_cast<int>(x1), static_cast<int>(y1)),
+                        cv::Point(static_cast<int>(x2), static_cast<int>(y2)),
+                        color, thickness);
+            }
+        }
+    }
 }
