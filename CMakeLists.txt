@@ -117,6 +117,14 @@ add_executable(pose_display_node
     src/pose_display_node.cpp
 )
 
+# 集成人员检测节点
+add_executable(integrated_person_detection_node
+    src/main_integrated.cpp
+    src/integrated_person_detection_node.cpp
+    ${RKNN_SRCS}
+    ${SIMPLIFIED_UTILS_SRCS}
+)
+
 # 组件库
 add_library(${PROJECT_NAME}_component SHARED
     ${RKNN_SRCS}
@@ -155,6 +163,9 @@ ament_target_dependencies(pose_display_node
     image_transport
 )
 
+# 集成人员检测节点依赖
+ament_target_dependencies(integrated_person_detection_node ${ROS2_DEPENDENCIES})
+
 # 链接系统库
 target_link_libraries(${PROJECT_NAME}_node
     ${RKNN_RT_LIB}
@@ -187,8 +198,18 @@ target_link_libraries(pose_display_node
     ${OpenCV_LIBS}
 )
 
+# 集成人员检测节点链接
+target_link_libraries(integrated_person_detection_node
+    ${RKNN_RT_LIB}
+    ${OpenCV_LIBS}
+    ${JSONCPP_LIBRARIES}
+    dl
+    pthread
+)
+
 # 添加jsoncpp编译标志
 target_compile_options(${PROJECT_NAME}_display_node PRIVATE ${JSONCPP_CFLAGS_OTHER})
+target_compile_options(integrated_person_detection_node PRIVATE ${JSONCPP_CFLAGS_OTHER})
 
 # 如果不使用简化依赖，链接原始工具库
 if(NOT USE_SIMPLIFIED_DEPS)
@@ -212,6 +233,7 @@ target_compile_features(${PROJECT_NAME}_node PUBLIC c_std_99 cxx_std_17)
 target_compile_features(${PROJECT_NAME}_component PUBLIC c_std_99 cxx_std_17)
 target_compile_features(rknn_yolov8_pose_node PUBLIC c_std_99 cxx_std_17)
 target_compile_features(pose_display_node PUBLIC c_std_99 cxx_std_17)
+target_compile_features(integrated_person_detection_node PUBLIC c_std_99 cxx_std_17)
 
 # 安装
 install(TARGETS ${PROJECT_NAME}_node
@@ -225,6 +247,9 @@ install(TARGETS rknn_yolov8_pose_node
     DESTINATION lib/${PROJECT_NAME})
 
 install(TARGETS pose_display_node
+    DESTINATION lib/${PROJECT_NAME})
+
+install(TARGETS integrated_person_detection_node
     DESTINATION lib/${PROJECT_NAME})
 
 install(TARGETS ${PROJECT_NAME}_component
