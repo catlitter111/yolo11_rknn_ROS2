@@ -6,7 +6,7 @@
 #include <sstream>
 
 IntegratedPersonDetectionNode::IntegratedPersonDetectionNode(const rclcpp::NodeOptions & options)
-: Node("integrated_person_detection_node", options), models_initialized_(false), pose_models_initialized_(false), frame_count_(0)
+: Node("integrated_person_detection_node", options), models_initialized_(false), pose_models_initialized_(false), current_mode_(DetectionMode::FULL_DETECTION), frame_count_(0), current_fps_(0.0)
 {
     // 声明参数
     this->declare_parameter("model_path", "/userdata/rknn_yolo11_ros2/model/cloth.rknn");
@@ -16,6 +16,7 @@ IntegratedPersonDetectionNode::IntegratedPersonDetectionNode(const rclcpp::NodeO
     this->declare_parameter("distance_query_topic", "/depth_reader/get_depth_at");
     this->declare_parameter("distance_result_topic", "/depth_reader/depth_value");
     this->declare_parameter("debug_image_topic", "/integrated_person/debug_image");
+    this->declare_parameter("mode_topic", "/integrated_person/detection_mode");
     this->declare_parameter("confidence_threshold", 0.3);
     this->declare_parameter("nms_threshold", 0.5);
     this->declare_parameter("enable_debug_display", true);
@@ -29,6 +30,7 @@ IntegratedPersonDetectionNode::IntegratedPersonDetectionNode(const rclcpp::NodeO
     this->get_parameter("distance_query_topic", distance_query_topic_);
     this->get_parameter("distance_result_topic", distance_result_topic_);
     this->get_parameter("debug_image_topic", debug_image_topic_);
+    this->get_parameter("mode_topic", mode_topic_);
     this->get_parameter("confidence_threshold", confidence_threshold_);
     this->get_parameter("nms_threshold", nms_threshold_);
     this->get_parameter("enable_debug_display", enable_debug_display_);
@@ -111,6 +113,11 @@ void IntegratedPersonDetectionNode::initialize()
     depth_result_sub_ = this->create_subscription<std_msgs::msg::String>(
         distance_result_topic_, reliable_qos,
         std::bind(&IntegratedPersonDetectionNode::depthResultCallback, this, std::placeholders::_1));
+    
+    // 订阅模式切换话题
+    mode_sub_ = this->create_subscription<std_msgs::msg::String>(
+        mode_topic_, reliable_qos,
+        std::bind(&IntegratedPersonDetectionNode::modeCallback, this, std::placeholders::_1));
     
     // 创建发布者
     person_pub_ = this->create_publisher<std_msgs::msg::String>(person_topic_, reliable_qos);
@@ -206,11 +213,18 @@ void IntegratedPersonDetectionNode::imageCallback(const sensor_msgs::msg::Image:
         std::vector<PersonInfo> persons = determinePersonPositions(pairs, image);
         RCLCPP_DEBUG(this->get_logger(), "步骤3: 确定了 %zu 个人员位置", persons.size());
         
-        // 4. 检测关键点
-        for (auto& person : persons) {
-            detectPersonKeypoints(image, person);
+        // 4. 检测关键点（仅在完整检测模式下）
+        {
+            std::lock_guard<std::mutex> lock(mode_mutex_);
+            if (current_mode_ == DetectionMode::FULL_DETECTION) {
+                for (auto& person : persons) {
+                    detectPersonKeypoints(image, person);
+                }
+                RCLCPP_DEBUG(this->get_logger(), "步骤4: 完成关键点检测");
+            } else {
+                RCLCPP_DEBUG(this->get_logger(), "步骤4: 跳过关键点检测（部分检测模式）");
+            }
         }
-        RCLCPP_DEBUG(this->get_logger(), "步骤4: 完成关键点检测");
         
         // 5. 查询距离信息
         for (auto& person : persons) {
@@ -230,9 +244,9 @@ void IntegratedPersonDetectionNode::imageCallback(const sensor_msgs::msg::Image:
         if (frame_count_ % 30 == 0) {
             auto now = std::chrono::steady_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_process_time);
-            double fps = 30000.0 / duration.count();
+            current_fps_ = 30000.0 / duration.count();
             RCLCPP_INFO(this->get_logger(), "处理FPS: %.1f, 帧数: %d, 检测到人数: %zu", 
-                       fps, frame_count_, persons.size());
+                       current_fps_, frame_count_, persons.size());
             last_process_time = now;
         }
         
@@ -698,8 +712,15 @@ cv::Mat IntegratedPersonDetectionNode::publishVisualization(const cv::Mat& image
         }
         
         // 添加统计信息
+        std::string mode_str;
+        {
+            std::lock_guard<std::mutex> lock(mode_mutex_);
+            mode_str = (current_mode_ == DetectionMode::FULL_DETECTION) ? "FULL" : "PARTIAL";
+        }
+        
         std::string stats = "Persons: " + std::to_string(persons.size()) + 
-                           ", Frame: " + std::to_string(frame_count_);
+                           ", FPS: " + std::to_string(static_cast<int>(current_fps_)) +
+                           ", Mode: " + mode_str;
         cv::putText(vis_image, stats, cv::Point(10, 30),
                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
         
@@ -723,6 +744,12 @@ void IntegratedPersonDetectionNode::publishPersonPositions(const std::vector<Per
         positions_data["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         positions_data["person_count"] = static_cast<int>(persons.size());
+        
+        // 添加检测模式信息
+        {
+            std::lock_guard<std::mutex> lock(mode_mutex_);
+            positions_data["detection_mode"] = (current_mode_ == DetectionMode::FULL_DETECTION) ? "FULL" : "PARTIAL";
+        }
         
         Json::Value persons_array(Json::arrayValue);
         
@@ -1360,4 +1387,39 @@ float IntegratedPersonDetectionNode::calculateKeypointDistance(const float keypo
     float dy = keypoints[idx1][1] - keypoints[idx2][1];
     
     return std::sqrt(dx * dx + dy * dy);
+}
+
+void IntegratedPersonDetectionNode::modeCallback(const std_msgs::msg::String::ConstSharedPtr msg)
+{
+    try {
+        std::string mode_str = msg->data;
+        DetectionMode new_mode;
+        
+        if (mode_str == "FULL" || mode_str == "full" || mode_str == "FULL_DETECTION") {
+            new_mode = DetectionMode::FULL_DETECTION;
+        } else if (mode_str == "PARTIAL" || mode_str == "partial" || mode_str == "PARTIAL_DETECTION") {
+            new_mode = DetectionMode::PARTIAL_DETECTION;
+        } else {
+            RCLCPP_WARN(this->get_logger(), "未知的检测模式: %s, 支持的模式: FULL, PARTIAL", mode_str.c_str());
+            return;
+        }
+        
+        {
+            std::lock_guard<std::mutex> lock(mode_mutex_);
+            if (current_mode_ != new_mode) {
+                current_mode_ = new_mode;
+                std::string mode_name = (new_mode == DetectionMode::FULL_DETECTION) ? "完整检测" : "部分检测";
+                RCLCPP_INFO(this->get_logger(), "检测模式已切换到: %s", mode_name.c_str());
+                
+                if (new_mode == DetectionMode::PARTIAL_DETECTION) {
+                    RCLCPP_INFO(this->get_logger(), "部分检测模式: 仅进行服装检测，跳过关键点检测和身体比例计算");
+                } else {
+                    RCLCPP_INFO(this->get_logger(), "完整检测模式: 进行服装检测、关键点检测和身体比例计算");
+                }
+            }
+        }
+        
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "处理模式切换消息时出错: %s", e.what());
+    }
 }

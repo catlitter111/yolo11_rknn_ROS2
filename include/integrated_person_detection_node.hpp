@@ -20,6 +20,13 @@
 #include <string>
 #include <unordered_map>
 #include <chrono>
+#include <mutex>
+
+// 检测模式枚举
+enum class DetectionMode {
+    FULL_DETECTION,      // 完整检测：服装+关键点+身体比例
+    PARTIAL_DETECTION    // 部分检测：仅服装检测
+};
 
 // 服装检测结果结构
 struct ClothingDetection {
@@ -117,6 +124,9 @@ private:
     // 距离查询
     void queryDistance(const cv::Point2f& point, const std::string& person_id);
     
+    // 模式切换相关
+    void modeCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+    
     // YOLOv8 Pose关键点检测
     bool initializePoseModel();
     void cleanupPoseModel();
@@ -146,6 +156,7 @@ private:
     std::shared_ptr<image_transport::ImageTransport> it_;
     image_transport::Subscriber image_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr depth_result_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr mode_sub_;  // 模式切换订阅者
     rclcpp::TimerBase::SharedPtr init_timer_;  // 添加初始化定时器
     
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr person_pub_;
@@ -169,9 +180,14 @@ private:
     std::string distance_query_topic_;
     std::string distance_result_topic_;
     std::string debug_image_topic_;
+    std::string mode_topic_;  // 模式切换话题
     float confidence_threshold_;
     float nms_threshold_;
     bool enable_debug_display_;
+    
+    // 检测模式相关
+    DetectionMode current_mode_;
+    std::mutex mode_mutex_;  // 保护模式变量的互斥锁
     
     // 服装类别映射
     std::unordered_map<int, std::string> class_names_;
@@ -184,6 +200,7 @@ private:
     
     // 性能监控
     int frame_count_;
+    double current_fps_;
     std::chrono::steady_clock::time_point last_fps_time_;
     
     // 骨骼连接关系 (COCO格式)
