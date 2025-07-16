@@ -36,12 +36,11 @@ struct ClothingDetection {
     float confidence;
     int class_id;
     std::string category;  // "upper" or "lower"
-    std::string color;     // 主要颜色名称
-    cv::Scalar color_rgb;  // RGB颜色值
+    cv::Scalar color_rgb;  // BGR颜色值
     bool has_upper;
     bool has_lower;
     
-    ClothingDetection() : color("unknown"), color_rgb(cv::Scalar(128, 128, 128)), has_upper(false), has_lower(false) {}
+    ClothingDetection() : color_rgb(cv::Scalar(128, 128, 128)), has_upper(false), has_lower(false) {}
 };
 
 // 全图姿态检测结果结构
