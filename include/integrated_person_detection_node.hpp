@@ -21,6 +21,8 @@
 #include <unordered_map>
 #include <chrono>
 #include <mutex>
+#include <future>  // 用于并行推理
+#include <thread>  // 用于多线程
 
 // 检测模式枚举
 enum class DetectionMode {
@@ -40,6 +42,22 @@ struct ClothingDetection {
     bool has_lower;
     
     ClothingDetection() : color("unknown"), color_rgb(cv::Scalar(128, 128, 128)), has_upper(false), has_lower(false) {}
+};
+
+// 全图姿态检测结果结构
+struct FullImagePoseResult {
+    cv::Rect person_bbox;        // 人体边界框
+    float confidence;            // 人体检测置信度
+    float keypoints[17][3];      // 17个关键点 (x, y, confidence)
+    bool has_keypoints;
+    
+    FullImagePoseResult() : confidence(0.0f), has_keypoints(false) {
+        for (int i = 0; i < 17; i++) {
+            keypoints[i][0] = 0.0f; // x
+            keypoints[i][1] = 0.0f; // y 
+            keypoints[i][2] = 0.0f; // confidence
+        }
+    }
 };
 
 // 服装配对结构
@@ -132,6 +150,11 @@ private:
     void cleanupPoseModel();
     void detectPersonKeypoints(const cv::Mat& image, PersonInfo& person);
     cv::Mat extractPersonROI(const cv::Mat& image, const cv::Rect& person_bbox);
+    
+    // 并行推理相关方法
+    std::vector<FullImagePoseResult> detectFullImagePose(const cv::Mat& image);
+    void fuseClothingAndPoseResults(std::vector<PersonInfo>& persons, 
+                                   const std::vector<FullImagePoseResult>& pose_results);
     
     // 身体比例计算
     bool calculateBodyRatios(PersonInfo& person);

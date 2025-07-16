@@ -201,9 +201,34 @@ void IntegratedPersonDetectionNode::imageCallback(const sensor_msgs::msg::Image:
         cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
         cv::Mat image = cv_ptr->image;
         
-        // 1. 检测服装
-        std::vector<ClothingDetection> detections = detectClothing(image);
-        RCLCPP_DEBUG(this->get_logger(), "步骤1: 检测到 %zu 个服装项目", detections.size());
+        // 🚀 并行推理：同时运行服装检测和姿态检测
+        std::vector<ClothingDetection> detections;
+        std::vector<FullImagePoseResult> pose_results;
+        
+        std::future<std::vector<ClothingDetection>> clothing_future;
+        std::future<std::vector<FullImagePoseResult>> pose_future;
+        
+        {
+            std::lock_guard<std::mutex> lock(mode_mutex_);
+            if (current_mode_ == DetectionMode::FULL_DETECTION) {
+                // 并行启动两个推理任务
+                clothing_future = std::async(std::launch::async, 
+                    &IntegratedPersonDetectionNode::detectClothing, this, std::ref(image));
+                pose_future = std::async(std::launch::async, 
+                    &IntegratedPersonDetectionNode::detectFullImagePose, this, std::ref(image));
+                
+                // 等待两个任务完成
+                detections = clothing_future.get();
+                pose_results = pose_future.get();
+                
+                RCLCPP_DEBUG(this->get_logger(), "并行推理完成: 检测到 %zu 个服装项目, %zu 个人体姿态", 
+                           detections.size(), pose_results.size());
+            } else {
+                // 部分检测模式：只运行服装检测
+                detections = detectClothing(image);
+                RCLCPP_DEBUG(this->get_logger(), "部分检测模式: 检测到 %zu 个服装项目", detections.size());
+            }
+        }
         
         // 2. 匹配服装项目
         std::vector<ClothingPair> pairs = matchClothingItems(detections);
@@ -213,16 +238,14 @@ void IntegratedPersonDetectionNode::imageCallback(const sensor_msgs::msg::Image:
         std::vector<PersonInfo> persons = determinePersonPositions(pairs, image);
         RCLCPP_DEBUG(this->get_logger(), "步骤3: 确定了 %zu 个人员位置", persons.size());
         
-        // 4. 检测关键点（仅在完整检测模式下）
+        // 4. 融合姿态检测结果（仅在完整检测模式下）
         {
             std::lock_guard<std::mutex> lock(mode_mutex_);
-            if (current_mode_ == DetectionMode::FULL_DETECTION) {
-                for (auto& person : persons) {
-                    detectPersonKeypoints(image, person);
-                }
-                RCLCPP_DEBUG(this->get_logger(), "步骤4: 完成关键点检测");
+            if (current_mode_ == DetectionMode::FULL_DETECTION && !pose_results.empty()) {
+                fuseClothingAndPoseResults(persons, pose_results);
+                RCLCPP_DEBUG(this->get_logger(), "步骤4: 完成姿态结果融合");
             } else {
-                RCLCPP_DEBUG(this->get_logger(), "步骤4: 跳过关键点检测（部分检测模式）");
+                RCLCPP_DEBUG(this->get_logger(), "步骤4: 跳过姿态融合（部分检测模式或无姿态结果）");
             }
         }
         
@@ -1414,7 +1437,7 @@ void IntegratedPersonDetectionNode::modeCallback(const std_msgs::msg::String::Co
                 if (new_mode == DetectionMode::PARTIAL_DETECTION) {
                     RCLCPP_INFO(this->get_logger(), "部分检测模式: 仅进行服装检测，跳过关键点检测和身体比例计算");
                 } else {
-                    RCLCPP_INFO(this->get_logger(), "完整检测模式: 进行服装检测、关键点检测和身体比例计算");
+                    RCLCPP_INFO(this->get_logger(), "完整检测模式: 进行并行推理 - 服装检测与姿态检测同时运行");
                 }
             }
         }
@@ -1422,4 +1445,145 @@ void IntegratedPersonDetectionNode::modeCallback(const std_msgs::msg::String::Co
     } catch (const std::exception& e) {
         RCLCPP_ERROR(this->get_logger(), "处理模式切换消息时出错: %s", e.what());
     }
+}
+
+// 🚀 并行推理：全图姿态检测方法
+std::vector<FullImagePoseResult> IntegratedPersonDetectionNode::detectFullImagePose(const cv::Mat& image)
+{
+    std::vector<FullImagePoseResult> results;
+    
+    if (!pose_models_initialized_) {
+        RCLCPP_WARN(this->get_logger(), "YOLOv8 Pose模型未初始化");
+        return results;
+    }
+    
+    try {
+        // 准备图像数据
+        image_buffer_t src_image;
+        memset(&src_image, 0, sizeof(image_buffer_t));
+        
+        src_image.width = image.cols;
+        src_image.height = image.rows;
+        src_image.format = IMAGE_FORMAT_RGB888;
+        src_image.size = image.cols * image.rows * 3;
+        
+        // 转换BGR到RGB
+        cv::Mat rgb_image;
+        cv::cvtColor(image, rgb_image, cv::COLOR_BGR2RGB);
+        src_image.virt_addr = rgb_image.data;
+        
+        // 执行全图姿态检测推理
+        pose_object_detect_result_list od_results;
+        int ret = inference_yolov8_pose_model(&pose_rknn_app_ctx_, &src_image, &od_results);
+        
+        if (ret == 0) {
+            RCLCPP_DEBUG(this->get_logger(), "全图姿态检测成功，检测到 %d 个人体", od_results.count);
+            
+            for (int i = 0; i < od_results.count; i++) {
+                const pose_object_detect_result& result = od_results.results[i];
+                
+                FullImagePoseResult pose_result;
+                
+                // 设置人体边界框
+                pose_result.person_bbox = cv::Rect(
+                    static_cast<int>(result.box.left),
+                    static_cast<int>(result.box.top),
+                    static_cast<int>(result.box.right - result.box.left),
+                    static_cast<int>(result.box.bottom - result.box.top)
+                );
+                
+                pose_result.confidence = result.prop;
+                
+                // 复制关键点信息
+                for (int k = 0; k < 17; k++) {
+                    pose_result.keypoints[k][0] = result.keypoints[k][0]; // x
+                    pose_result.keypoints[k][1] = result.keypoints[k][1]; // y
+                    pose_result.keypoints[k][2] = result.keypoints[k][2]; // confidence
+                }
+                
+                pose_result.has_keypoints = true;
+                results.push_back(pose_result);
+                
+                RCLCPP_DEBUG(this->get_logger(), 
+                           "全图姿态检测结果 %d: 边界框=(%d,%d,%d,%d), 置信度=%.2f", 
+                           i, pose_result.person_bbox.x, pose_result.person_bbox.y,
+                           pose_result.person_bbox.width, pose_result.person_bbox.height,
+                           pose_result.confidence);
+            }
+        } else {
+            RCLCPP_DEBUG(this->get_logger(), "全图姿态检测失败 ret=%d", ret);
+        }
+        
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "全图姿态检测异常: %s", e.what());
+    }
+    
+    return results;
+}
+
+// 🔄 融合服装检测和姿态检测结果
+void IntegratedPersonDetectionNode::fuseClothingAndPoseResults(
+    std::vector<PersonInfo>& persons, 
+    const std::vector<FullImagePoseResult>& pose_results)
+{
+    if (pose_results.empty()) {
+        RCLCPP_DEBUG(this->get_logger(), "无姿态检测结果可融合");
+        return;
+    }
+    
+    RCLCPP_DEBUG(this->get_logger(), "开始融合 %zu 个人员和 %zu 个姿态结果", 
+                persons.size(), pose_results.size());
+    
+    // 为每个人员寻找最匹配的姿态结果
+    for (auto& person : persons) {
+        float best_iou = 0.0f;
+        int best_pose_idx = -1;
+        
+        // 计算人员边界框与各个姿态检测结果的重叠度
+        for (size_t i = 0; i < pose_results.size(); i++) {
+            const auto& pose_result = pose_results[i];
+            
+            // 计算IoU (Intersection over Union)
+            cv::Rect intersection = person.person_bbox & pose_result.person_bbox;
+            if (intersection.area() > 0) {
+                cv::Rect union_rect = person.person_bbox | pose_result.person_bbox;
+                float iou = static_cast<float>(intersection.area()) / union_rect.area();
+                
+                if (iou > best_iou && iou > 0.3f) { // IoU阈值
+                    best_iou = iou;
+                    best_pose_idx = i;
+                }
+            }
+        }
+        
+        // 如果找到匹配的姿态结果，进行融合
+        if (best_pose_idx >= 0) {
+            const auto& pose_result = pose_results[best_pose_idx];
+            
+            // 复制关键点信息
+            for (int k = 0; k < 17; k++) {
+                person.keypoints[k][0] = pose_result.keypoints[k][0];
+                person.keypoints[k][1] = pose_result.keypoints[k][1];
+                person.keypoints[k][2] = pose_result.keypoints[k][2];
+            }
+            
+            person.has_keypoints = true;
+            
+            // 基于关键点计算身体比例
+            if (calculateBodyRatios(person)) {
+                RCLCPP_DEBUG(this->get_logger(), 
+                           "成功融合人员 %s 的姿态信息 (IoU=%.2f) 并计算身体比例", 
+                           person.person_id.c_str(), best_iou);
+            } else {
+                RCLCPP_DEBUG(this->get_logger(), 
+                           "成功融合人员 %s 的姿态信息 (IoU=%.2f) 但身体比例计算失败", 
+                           person.person_id.c_str(), best_iou);
+            }
+        } else {
+            RCLCPP_DEBUG(this->get_logger(), 
+                       "人员 %s 未找到匹配的姿态检测结果", person.person_id.c_str());
+        }
+    }
+    
+    RCLCPP_DEBUG(this->get_logger(), "完成融合处理");
 }
